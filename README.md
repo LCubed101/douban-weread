@@ -12,24 +12,21 @@ A book title is not a unique identity. The same work may have multiple editions 
 
 ## Quick start: CLI search
 
-The first interface-independent demo can search Douban by title or ISBN without Feishu or WeRead credentials.
+The first interface-independent demo can search public Douban Book web pages by title or ISBN without Feishu or WeRead credentials.
 
 ```bash
 git clone https://github.com/LCubed101/douban-weread.git
 cd douban-weread
-python -m pip install -e .
-```
-
-If your Douban API access requires a key, set it locally (never commit it):
-
-```bash
-export DOUBAN_API_KEY="your-key"
+git checkout agent/cli-search-demo
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -e .
 ```
 
 Search by title:
 
 ```bash
-python -m douban_weread search "百年孤独"
+python3 -m douban_weread search "百年孤独"
 # or, after installation:
 douban-weread search "百年孤独"
 ```
@@ -37,7 +34,7 @@ douban-weread search "百年孤独"
 Search an exact edition by ISBN:
 
 ```bash
-python -m douban_weread search --isbn 9787544253994
+python3 -m douban_weread search --isbn 9787544253994
 ```
 
 A title search intentionally prints multiple candidate editions when available so the user can compare translator, publisher, publication date, and ISBN before any future state-changing action.
@@ -49,7 +46,7 @@ CLI exit codes:
 - `2` — invalid CLI arguments (standard `argparse` behavior)
 - `3` — no matching edition found
 
-> The current Douban provider is an early, read-only adapter. Endpoint availability may vary; tests use mocked responses and do not depend on live Douban access.
+> The current Douban provider is read-only and uses public Douban Book web search plus subject pages. It does not depend on the legacy `api.douban.com/v2/book` endpoint. Because this is an unofficial web integration, Douban page structure or anti-bot behavior may change and should be handled conservatively.
 
 ## User flow
 
