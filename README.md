@@ -12,7 +12,7 @@ A book title is not a unique identity. The same work may have multiple editions 
 
 ## Quick start: CLI search
 
-The first interface-independent demo can search public Douban Book web pages by title or ISBN without Feishu or WeRead credentials.
+The first interface-independent demo can search public Douban Book web pages by title or ISBN without Feishu or WeRead credentials. Python 3.10+ is supported.
 
 ```bash
 git clone https://github.com/LCubed101/douban-weread.git
@@ -20,6 +20,7 @@ cd douban-weread
 git checkout agent/cli-search-demo
 python3 -m venv .venv
 source .venv/bin/activate
+python3 -m pip install --upgrade pip
 python3 -m pip install -e .
 ```
 
