@@ -15,7 +15,9 @@ from douban_weread.providers.douban.history import HistoryEntry
 
 _HISTORY_STATES = {"wish", "do", "collect"}
 _NON_WORD_RE = re.compile(r"[^\w\u4e00-\u9fff]+", re.UNICODE)
-_BASELINE_VERSION = 2
+# v3 requires canonical Book title anchors. v2 could persist purchase-link text
+# such as "纸质版 46.60元" as the title and must not be trusted for lookup.
+_BASELINE_VERSION = 3
 
 
 @dataclass(slots=True, frozen=True)
