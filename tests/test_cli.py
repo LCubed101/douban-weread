@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import io
+import os
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from douban_weread.cli import (
     EXIT_CONFIRMATION_REQUIRED,
@@ -10,6 +12,7 @@ from douban_weread.cli import (
     EXIT_OK,
     EXIT_PROVIDER_ERROR,
     EXIT_WRITE_VERIFICATION_ERROR,
+    _default_interest_client,
     format_edition,
     run,
 )
@@ -174,6 +177,16 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(code, EXIT_NO_RESULTS)
         self.assertEqual(client.last_title, ("百年孤独", 100))
+
+    def test_default_interest_client_accepts_cookie_header_prefix(self) -> None:
+        raw = 'Cookie: bid=test-bid; dbcl2="test-user:test-session"; ck=test-csrf'
+        with patch.dict(os.environ, {"DOUBAN_COOKIE": raw}, clear=False):
+            client = _default_interest_client()
+
+        self.assertEqual(client.cookies.get("bid"), "test-bid")
+        self.assertEqual(client.cookies.get("dbcl2"), "test-user:test-session")
+        self.assertEqual(client.ck, "test-csrf")
+        self.assertFalse(client.cookie_header.lower().startswith("cookie:"))
 
     def test_auth_check_prints_success_without_cookie_value(self) -> None:
         interest = FakeInterestClient()
