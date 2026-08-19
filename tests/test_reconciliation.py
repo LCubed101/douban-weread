@@ -8,6 +8,7 @@ from douban_weread.reconciliation import (
     ReadingState,
     ReconciliationAction,
     WorkStateRecord,
+    reading_state_from_douban,
     reconcile_work_states,
 )
 
@@ -89,6 +90,12 @@ class ReconciliationPolicyTests(unittest.TestCase):
     def test_other_wish_edition_is_edition_mismatch_not_duplicate_write(self) -> None:
         decision = self.decision(ReadingState.NONE, ReadingState.WISH)
         self.assertEqual(decision.action, ReconciliationAction.REVIEW_OTHER_WISH_EDITION)
+        self.assertFalse(decision.safe_to_write_wish)
+
+    def test_unknown_provider_state_fails_closed(self) -> None:
+        self.assertEqual(reading_state_from_douban("unexpected"), ReadingState.UNKNOWN)
+        decision = self.decision(ReadingState.NONE, ReadingState.UNKNOWN)
+        self.assertEqual(decision.action, ReconciliationAction.REVIEW_UNKNOWN_STATE)
         self.assertFalse(decision.safe_to_write_wish)
 
     def test_no_existing_state_is_safe_to_wish_but_still_requires_confirmation(self) -> None:
