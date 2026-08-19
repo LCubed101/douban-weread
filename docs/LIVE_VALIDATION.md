@@ -316,3 +316,29 @@ The next reliability layer remains a local Douban reading-history index before r
 ### Write status
 
 No state-changing `wish` request was performed in this validation. A real write remains deferred until the account/session secret has been replaced after accidental exposure and the intended completeness boundary for historical-state checking is accepted or improved.
+
+## 2026-08-19 — History baseline parser-drift recovery
+
+The first live history sync exposed PIT-020: authenticated HTTP requests succeeded, but the old list parser returned zero entries and incorrectly marked the baseline complete. After the parser and baseline-version fixes were added, the complete local regression suite passed:
+
+```text
+Ran 95 tests in 0.046s
+OK
+```
+
+The previously written `complete + 0 rows` SQLite snapshot was then checked with:
+
+```bash
+douban-weread history status
+```
+
+Observed result:
+
+```text
+History baseline: not synced
+Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
+```
+
+This validates the migration/safety boundary: a baseline produced by the pre-fix parser is no longer trusted as complete after the parser schema version changes. No manual database deletion was required.
+
+The corrected `li.subject-item` live history parsing path still requires a second authenticated full-sync run before history ingestion itself is considered live-validated.
