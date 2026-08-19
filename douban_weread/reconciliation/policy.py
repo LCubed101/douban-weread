@@ -11,6 +11,7 @@ class ReadingState(str, Enum):
     WISH = "wish"
     READING = "reading"
     READ = "read"
+    UNKNOWN = "unknown"
 
 
 class ReconciliationAction(str, Enum):
@@ -20,6 +21,7 @@ class ReconciliationAction(str, Enum):
     NOOP_ALREADY_READ = "noop_already_read"
     REVIEW_OTHER_WISH_EDITION = "review_other_wish_edition"
     REVIEW_OTHER_READING_EDITION = "review_other_reading_edition"
+    REVIEW_UNKNOWN_STATE = "review_unknown_state"
     ASK_REREAD = "ask_reread"
 
 
@@ -47,7 +49,7 @@ def reading_state_from_douban(raw_state: str | None) -> ReadingState:
         "wish": ReadingState.WISH,
         "do": ReadingState.READING,
         "collect": ReadingState.READ,
-    }.get(raw_state, ReadingState.NONE)
+    }.get(raw_state, ReadingState.UNKNOWN)
 
 
 def reconcile_work_states(
@@ -58,10 +60,21 @@ def reconcile_work_states(
 
     State precedence is used only to prevent accidental downgrade. It does not
     silently copy state between editions and it does not infer a reread.
+    Unknown states fail closed rather than being treated as NONE.
     """
 
     target_record = next((record for record in records if record.is_target), None)
-    target_state = target_record.state if target_record else ReadingState.NONE
+    target_state = target_record.state if target_record else ReadingState.UNKNOWN
+
+    if target_state is ReadingState.UNKNOWN:
+        return ReconciliationDecision(
+            target=target,
+            records=records,
+            action=ReconciliationAction.REVIEW_UNKNOWN_STATE,
+            safe_to_write_wish=False,
+            requires_user_decision=True,
+            reason="The selected edition has an unknown reading state; do not treat it as unmarked.",
+        )
 
     if target_state is ReadingState.READ:
         return ReconciliationDecision(
@@ -94,6 +107,19 @@ def reconcile_work_states(
         )
 
     other_records = [record for record in records if not record.is_target]
+
+    if any(record.state is ReadingState.UNKNOWN for record in other_records):
+        return ReconciliationDecision(
+            target=target,
+            records=records,
+            action=ReconciliationAction.REVIEW_UNKNOWN_STATE,
+            safe_to_write_wish=False,
+            requires_user_decision=True,
+            reason=(
+                "At least one same-Work edition has an unknown reading state. "
+                "Fail closed until the provider state can be interpreted."
+            ),
+        )
 
     if any(record.state is ReadingState.READ for record in other_records):
         return ReconciliationDecision(
