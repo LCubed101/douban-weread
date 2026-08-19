@@ -2,7 +2,7 @@
 
 This document records real failures encountered while developing and validating `douban-weread`, together with their diagnosis and resolution.
 
-The goal is not only to list fixes, but to preserve **how we distinguished environment problems, provider problems, parsing problems, and matching problems** so future contributors do not have to rediscover the same path.
+The goal is not only to list fixes, but to preserve **how we distinguished environment problems, provider problems, parsing problems, matching problems, and test-fixture problems** so future contributors do not have to rediscover the same path.
 
 Successful end-to-end snapshots are recorded separately in [LIVE_VALIDATION.md](LIVE_VALIDATION.md).
 
@@ -10,17 +10,19 @@ Last live validation: **2026-08-19**.
 
 ## Known-good baseline
 
-The following setup was validated successfully on macOS:
+The following setup was validated successfully on macOS before the authenticated-write branch:
 
 - Python 3.10
 - virtual environment created with `python3 -m venv .venv`
 - modern pip after `python3 -m pip install --upgrade pip`
 - editable install with `python3 -m pip install -e .`
-- 31/31 unit tests passing after resolver identity regressions were added
+- 31/31 read-only/resolver unit tests passing
 - live title search for `百年孤独` returning 10 Douban editions
 - live ISBN search for `9787544253994` resolving to Douban subject `6082808`
 - installed console command `douban-weread` working after editable install
 - live resolver ranking validated against all 10 candidates
+
+The authenticated-write branch adds more tests and is validated separately before any live mutation.
 
 Useful verification commands:
 
@@ -178,9 +180,9 @@ The Douban provider now uses a browser-like default User-Agent while keeping it 
 A provider error should be classified before changing parsing logic:
 
 ```text
-TLS error  -> environment / certificate layer
-HTTP 418   -> request fingerprint / anti-bot layer
-HTTP 4xx   -> endpoint / request contract layer
+TLS error   -> environment / certificate layer
+HTTP 418    -> request fingerprint / anti-bot layer
+HTTP 4xx    -> endpoint / request contract layer
 parse error -> HTML / metadata layer
 match error -> resolver layer
 ```
@@ -277,8 +279,6 @@ Live `百年孤独` results exposed several normalization edge cases:
 
 ### Author nationality prefixes vary
 
-Examples:
-
 ```text
 [哥伦比亚] 加西亚·马尔克斯
 [哥伦比亚]加西亚·马尔克斯
@@ -287,8 +287,6 @@ Examples:
 
 ### Name punctuation varies
 
-Examples include different middle-dot characters and spacing:
-
 ```text
 加西亚·马尔克斯
 加西亚・马尔克斯
@@ -296,8 +294,6 @@ Examples include different middle-dot characters and spacing:
 ```
 
 ### Translator formatting varies
-
-Examples:
 
 ```text
 黄锦炎, 沈国正, 陈泉
@@ -310,17 +306,7 @@ One real candidate (`subject/1937228`) did not expose an ISBN in the parsed resu
 
 ### Design consequence
 
-Do not use raw display strings as identity keys.
-
-The resolver should continue to:
-
-- normalize Unicode and punctuation for comparison
-- strip nationality-like prefixes for person matching
-- treat missing metadata as unknown, not automatically different
-- preserve raw/source metadata for debugging
-- never perform a state-changing action from title-only similarity
-
-Display values should remain close to the source; comparison values may be normalized separately.
+Do not use raw display strings as identity keys. Treat missing metadata as unknown, preserve source metadata, normalize only for comparison, and never authorize a state-changing action from title-only similarity.
 
 ---
 
@@ -336,8 +322,6 @@ Only after those layers were tested independently did the real search succeed.
 
 ### Recommended validation sequence
 
-For any provider change:
-
 ```text
 1. Unit tests with fixtures/mocks
 2. Basic network reachability
@@ -350,62 +334,17 @@ For any provider change:
 9. Only then consider write actions
 ```
 
-### Why this matters
-
-A failing live test should not immediately trigger changes to the resolver or data model. First identify the layer that failed.
-
 ---
 
 ## PIT-009 — Shell output and example data are not terminal commands
 
 ### Symptom
 
-After a successful install, copying the success message back into zsh produced:
-
-```text
-zsh: command not found: Successfully
-```
-
-Likewise, copying an illustrative block such as:
-
-```text
-Source Edition:
-2011 / 范晔 / 南海出版公司
-ISBN 9787544253994
-```
-
-into the terminal produced `command not found` errors for `Source`, `2011`, and `ISBN`.
-
-### Cause
-
-The shell executes every pasted line as a command. Human-readable output, labels, expected results, and conceptual examples are not executable unless they are explicitly wrapped in a real shell/Python command.
+Copying success messages or conceptual example data into zsh produced `command not found` errors.
 
 ### Resolution
 
-Only paste commands from fenced blocks explicitly marked as executable (`bash`, `sh`, or a complete `python3 - <<'PY' ... PY` block).
-
-For example, this is a command:
-
-```bash
-douban-weread search --isbn 9787544253994
-```
-
-This is output/data and should **not** be pasted as a command:
-
-```text
-Successfully installed douban-weread-0.1.0
-Source Edition: 2011 / 范晔 / 南海出版公司
-```
-
-### Documentation rule
-
-Contributor-facing instructions should clearly distinguish:
-
-- **Run:** executable command blocks
-- **Expected output:** non-executable text blocks
-- **Example data / model state:** non-executable text or tables
-
-This is especially important for contributors who are following terminal instructions step by step.
+Only paste commands from fenced blocks explicitly marked as executable. Contributor-facing docs should distinguish **Run**, **Expected output**, and **Example data / model state**.
 
 ---
 
@@ -422,20 +361,33 @@ Key rule:
 
 > Similarity answers how close two records are; explicit identity evidence answers whether they are the same Edition.
 
-Known ISBN / publisher / publication-year differences now identify an `ALTERNATIVE_EDITION`. Translator / language / revision-content differences additionally require confirmation.
+---
+
+## PIT-011 — Running Git/tests from the wrong working directory
+
+A new terminal opened in `~` rather than `~/douban-weread`. Git then reported `not a git repository`, and `unittest discover` imported an unrelated `site-packages/tests` package, producing misleading `pytest` errors.
+
+See [PIT-011](pitfalls/PIT-011-wrong-working-directory.md).
+
+Key rule: `cd` into the repository and activate its virtual environment before Git or test commands.
+
+---
+
+## PIT-012 — Hand-written JSON with embedded HTML can break the fixture itself
+
+Authenticated-interest tests initially failed in `json.loads()` before the HTML parser was reached because the mock response body was hand-written JSON containing another quoting layer for HTML attributes.
+
+The fixtures now use `json.dumps()` instead of manual JSON escaping.
+
+See [PIT-012](pitfalls/PIT-012-nested-json-html-test-fixtures.md).
+
+Key rule: when a mock response contains nested structured content, let the corresponding encoder build the outer representation.
 
 ---
 
 ## Current live-validation sample: `百年孤独`
 
-On 2026-08-19 the CLI returned 10 candidate editions spanning:
-
-- different translators
-- different publishers
-- publication years from the 1980s through 2025
-- editions with and without ISBNs
-
-This is a useful regression case because it exercises exactly why the project separates **Work** from **Edition**.
+On 2026-08-19 the CLI returned 10 candidate editions spanning different translators, publishers, publication years, and missing metadata. This remains a useful Work-vs-Edition regression case.
 
 Recommended recurring smoke tests:
 
@@ -450,8 +402,6 @@ Do not assert that the ordering or total candidate count will remain permanently
 ---
 
 ## How to add a new pitfall
-
-When a new issue is discovered, append a section using this template:
 
 ```markdown
 ## PIT-XXX — Short name
@@ -479,4 +429,4 @@ Prefer evidence from a reproducible command or test. If the root cause is still 
 
 ## Provider caveat
 
-The Douban Web Provider is an unofficial integration over public web pages. Page structure, anti-bot behavior, and availability can change. Keep parsing isolated inside the provider, fail conservatively, avoid excessive requests, and never commit user cookies or secrets.
+The Douban Web Provider is an unofficial integration over public/internal web interfaces. Page structure, anti-bot behavior, and availability can change. Keep provider logic isolated, fail conservatively, avoid excessive requests, and never commit user cookies or secrets.
