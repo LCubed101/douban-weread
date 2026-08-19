@@ -133,6 +133,20 @@ class ReadingHistoryIndexTests(unittest.TestCase):
         self.assertIn("1062694", ids)
         self.assertNotIn("999", ids)
 
+    def test_one_character_substring_does_not_pollute_title_shortlist(self) -> None:
+        self.index.replace_full(
+            [
+                HistoryEntry("3259440", "白夜行", "collect"),
+                HistoryEntry("10554308", "白夜行", "collect"),
+                HistoryEntry("35965039", "白", "wish"),
+            ]
+        )
+
+        candidates = self.index.find_title_candidates("白夜行")
+        ids = {entry.subject_id for entry in candidates}
+
+        self.assertEqual(ids, {"3259440", "10554308"})
+
     def test_set_state_updates_one_verified_project_owned_mutation(self) -> None:
         self.index.replace_full([HistoryEntry("1", "测试书", "wish")])
         self.index.set_state("1", "测试书", "collect")
