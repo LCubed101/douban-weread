@@ -20,6 +20,7 @@ from douban_weread.providers.douban import (
 )
 from douban_weread.reconciliation import (
     DoubanWorkInspector,
+    IncompleteHistoryBaselineError,
     ReconciliationAction,
     ReconciliationDecision,
 )
@@ -60,6 +61,8 @@ class HistoryIndex(Protocol):
     def status(self) -> HistoryIndexStatus: ...
 
     def find_title_candidates(self, title: str, *, limit: int = 30, min_similarity: float = 0.72): ...
+
+    def set_state(self, subject_id: str, title: str, state: str) -> None: ...
 
 
 SearchClientFactory = Callable[[], BookSearchClient]
@@ -202,24 +205,25 @@ def build_parser() -> argparse.ArgumentParser:
         "inspect",
         help="Inspect same-Work Douban editions and recommend a safe action.",
         description=(
-            "Read-only Work-level reconciliation. Discovers same-Work editions, reads their states, "
-            "and blocks accidental downgrade or duplicate Want-to-Read actions."
+            "Read-only Work-level reconciliation. Uses the complete local reading-history baseline plus live "
+            "same-Work discovery, verifies candidate Edition metadata, reads current states, and blocks accidental "
+            "downgrade or duplicate Want-to-Read actions."
         ),
     )
     inspect.add_argument("--subject", required=True, help="Exact Douban Book subject ID to inspect.")
     inspect.add_argument(
         "--limit",
         type=int,
-        default=10,
-        help="Maximum title-search candidates considered for same-Work discovery (default: 10).",
+        default=20,
+        help="Maximum live title-search candidates considered for same-Work discovery (default: 20).",
     )
 
     wish = subparsers.add_parser(
         "wish",
         help="Safely mark one reconciled Douban Book subject as Want-to-Read.",
         description=(
-            "State-changing command. It requires --confirm, performs Work-level reconciliation first, "
-            "and verifies the saved state after the write."
+            "State-changing command. It requires --confirm, a complete local history baseline, Work-level "
+            "reconciliation, and read-back verification after the write."
         ),
     )
     wish.add_argument("--subject", required=True, help="Exact Douban Book subject ID to update.")
@@ -342,6 +346,7 @@ def _inspect(
     limit: int,
     client_factory: SearchClientFactory,
     interest_client_factory: InterestClientFactory,
+    history_index: HistoryIndex,
 ) -> ReconciliationDecision:
     search_client = client_factory()
     interest_client = interest_client_factory()
@@ -349,6 +354,9 @@ def _inspect(
         search_client,
         interest_client,
         candidate_limit=limit,
+        history_provider=history_index,
+        history_candidate_limit=30,
+        require_complete_history=True,
     )
     return inspector.inspect_subject(subject_id)
 
@@ -467,14 +475,19 @@ def run(
         return EXIT_OK
 
     if args.command == "inspect":
+        index = history_index_factory()
         try:
             decision = _inspect(
                 args.subject,
                 limit=max(1, min(args.limit, 20)),
                 client_factory=client_factory,
                 interest_client_factory=interest_client_factory,
+                history_index=index,
             )
-        except (DoubanAuthError, DoubanProviderError, ValueError) as exc:
+        except IncompleteHistoryBaselineError as exc:
+            print(f"Reconciliation required: {exc}", file=stderr)
+            return EXIT_RECONCILIATION_REQUIRED
+        except (DoubanAuthError, DoubanProviderError, ValueError, OSError, sqlite3.Error) as exc:
             print(f"Douban inspect error: {exc}", file=stderr)
             return EXIT_PROVIDER_ERROR
         print(format_reconciliation(decision), file=stdout)
@@ -488,14 +501,20 @@ def run(
             )
             return EXIT_CONFIRMATION_REQUIRED
 
+        index = history_index_factory()
         try:
             decision = _inspect(
                 args.subject,
-                limit=10,
+                limit=20,
                 client_factory=client_factory,
                 interest_client_factory=interest_client_factory,
+                history_index=index,
             )
-        except (DoubanAuthError, DoubanProviderError, ValueError) as exc:
+        except IncompleteHistoryBaselineError as exc:
+            print(f"Reconciliation required: {exc}", file=stderr)
+            print("No write was performed.", file=stderr)
+            return EXIT_RECONCILIATION_REQUIRED
+        except (DoubanAuthError, DoubanProviderError, ValueError, OSError, sqlite3.Error) as exc:
             print(f"Douban wish reconciliation error: {exc}", file=stderr)
             return EXIT_PROVIDER_ERROR
 
@@ -523,6 +542,15 @@ def run(
         except (DoubanAuthError, DoubanProviderError, ValueError) as exc:
             print(f"Douban wish error: {exc}", file=stderr)
             return EXIT_PROVIDER_ERROR
+
+        try:
+            index.set_state(args.subject, decision.target.title, "wish")
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            print(
+                "Warning: the Douban write was verified, but the local history index could not be updated: "
+                f"{exc}",
+                file=stderr,
+            )
 
         print(
             f"Douban subject {result.subject_id} is now marked Want-to-Read and the saved state was verified.",
