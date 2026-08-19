@@ -34,6 +34,8 @@ class BookSearchClient(Protocol):
 class BookInterestClient(Protocol):
     def check_auth(self, *, probe_subject_id: str = "6082808"): ...
 
+    def get_interest_status(self, subject_id: str) -> str | None: ...
+
     def mark_wish(self, subject_id: str, *, confirmed: bool = False): ...
 
 
@@ -125,6 +127,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="6082808",
         help="Read-only Douban subject used for the authenticated endpoint probe.",
     )
+
+    status = subparsers.add_parser(
+        "status",
+        help="Read the current Douban reading state for one exact subject.",
+        description="Read-only command. Returns wish, do, collect, or none for the exact subject ID.",
+    )
+    status.add_argument("--subject", required=True, help="Exact Douban Book subject ID to inspect.")
 
     wish = subparsers.add_parser(
         "wish",
@@ -249,6 +258,16 @@ def run(
             return EXIT_OK
         print(f"Douban auth failed [{status.reason}]: {status.message}", file=stderr)
         return EXIT_PROVIDER_ERROR
+
+    if args.command == "status":
+        client = interest_client_factory()
+        try:
+            current = client.get_interest_status(args.subject)
+        except (DoubanAuthError, DoubanProviderError, ValueError) as exc:
+            print(f"Douban status error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+        print(f"Douban subject {args.subject} interest: {current or 'none'}", file=stdout)
+        return EXIT_OK
 
     if args.command == "wish":
         client = interest_client_factory()
