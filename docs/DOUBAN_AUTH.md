@@ -32,6 +32,30 @@ export DOUBAN_COOKIE='bid=...; dbcl2="..."; ck=...; ...'
 
 If using a local `.env` loader later, keep the file ignored by Git.
 
+A browser may expose the same request header in either of these one-line forms:
+
+```text
+bid=...; dbcl2=...; ck=...
+```
+
+or:
+
+```text
+Cookie: bid=...; dbcl2=...; ck=...
+```
+
+The CLI accepts both forms. Do not paste a full multi-line request-header dump or a complete cURL command as `DOUBAN_COOKIE`.
+
+To avoid putting the Cookie directly into shell history:
+
+```bash
+read -s "DOUBAN_COOKIE?Paste Douban Cookie locally: "
+export DOUBAN_COOKIE
+echo
+```
+
+The terminal intentionally does not echo the pasted secret.
+
 ## Read-only authentication check
 
 Run this before any write test:
@@ -58,6 +82,8 @@ It may report:
 - `network_or_provider`
 
 Captcha / anti-abuse pages are surfaced as errors. The project should not automate captcha bypass.
+
+If `cookie_format` occurs, first verify locally that you copied only the single Cookie request header (with or without the `Cookie:` prefix), rather than a multi-line header dump. Do not print or share the Cookie value while debugging.
 
 ## Want-to-Read action
 
@@ -114,6 +140,13 @@ Use a real account only after the unit tests pass.
 8. Verify both the CLI read-back and the Douban web UI.
 
 Record any new failure mode in `docs/TROUBLESHOOTING.md` or `docs/pitfalls/`.
+
+## Live validation status — 2026-08-19
+
+- 51/51 tests passed on the user's macOS / Python 3.10 environment before the first auth attempt.
+- The first `douban-weread auth check` stopped at local Cookie parsing with `cookie_format`; no network-auth success was claimed and no state-changing request was made.
+- The CLI now normalizes a common one-line `Cookie: ...` prefix; this path still requires live re-validation.
+- No live `wish` write should be attempted until `douban-weread auth check` succeeds.
 
 ## Known uncertainty
 
