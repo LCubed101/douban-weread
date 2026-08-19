@@ -1,6 +1,6 @@
 # Work-Level Reading-State Reconciliation
 
-Status: **implemented for Douban candidate scanning; live validation required**.
+Status: **implemented and live-validated for bounded Douban candidate scanning; full-history indexing still required for exhaustive forgotten-history detection**.
 
 ## Why this layer exists
 
@@ -31,8 +31,6 @@ Current Douban mapping:
 | `collect` | `READ` |
 | unrecognized value | `UNKNOWN` |
 
-`UNKNOWN` is not treated as `NONE`; it blocks mutation until the state can be interpreted safely.
-
 Future WeRead states will be mapped into the same provider-independent layer only after the actual WeRead capabilities are verified.
 
 ## Read is sticky
@@ -53,7 +51,7 @@ Examples:
 - another Edition of the same Work is `READ` → ask whether this is a reread
 - another Edition is `READING` → block a competing automatic `WISH`
 - another Edition is `WISH` → treat as an edition mismatch requiring review
-- any same-Work Edition has `UNKNOWN` state → fail closed
+- unknown provider state → fail closed
 - no known state for the Work → eligible for an explicitly confirmed `WISH`
 
 ## CLI
@@ -67,7 +65,7 @@ douban-weread status --subject 25837854
 Inspect same-Work state history without writing:
 
 ```bash
-douban-weread inspect --subject 25837854
+douban-weread inspect --subject 25837854 --limit 20
 ```
 
 A representative result is:
@@ -84,7 +82,7 @@ The `wish` command now performs the same reconciliation before mutation:
 douban-weread wish --subject 25837854 --confirm
 ```
 
-If reconciliation finds an existing `READ`, `READING`, other-edition `WISH`, or `UNKNOWN` state, the command fails closed and performs no write.
+If reconciliation finds an existing `READ`, `READING`, other-edition `WISH`, or unknown state, the command fails closed and performs no write.
 
 ## Current discovery strategy
 
@@ -96,13 +94,34 @@ The first implementation:
 4. reads authenticated interest state for those candidate subjects;
 5. applies the reconciliation policy.
 
-This is intentionally conservative but **not exhaustive**. Public title search may not surface every historical edition a user has ever marked.
+The live inspector supports up to 20 title-search candidates. This is intentionally conservative but **not exhaustive**. Public title search may not surface every historical edition a user has ever marked.
 
 Therefore `SAFE_TO_WISH` currently means:
 
 > No conflicting state was found among the same-Work editions discovered by the current provider scan.
 
 It does not yet mean that the user's complete Douban history has been exhaustively indexed.
+
+## Live validation — 2026-08-19
+
+The reconciliation branch passed:
+
+```text
+Ran 71 tests in 0.016s
+OK
+```
+
+A real read-only inspection was then run for subject `25837854` (`荷马史诗·奥德赛`, 王焕生, 人民文学出版社, 2015-06, ISBN `9787020102792`) with `--limit 20`.
+
+The scan resolved six same-Work 王焕生 / 人民文学出版社 editions. All six returned `NONE`, producing:
+
+```text
+Decision: safe_to_wish
+Safe to write Want-to-Read: True
+Requires user decision: True
+```
+
+This validates the bounded live path from exact subject lookup through same-Work filtering and authenticated per-edition state reads to reconciliation. It does **not** validate exhaustive reading-history coverage.
 
 ## Next reliability layer: local reading-history index
 
@@ -134,7 +153,7 @@ This history index should preserve the original platform state and Edition rathe
 Work
 ├── Editions
 ├── Douban states
-│   └── Edition → NONE / WISH / READING / READ / UNKNOWN
+│   └── Edition → NONE / WISH / READING / READ
 ├── WeRead states
 │   └── Edition → provider-verified state
 └── Reconciliation
