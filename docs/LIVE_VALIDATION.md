@@ -244,3 +244,75 @@ local secret input without echo
 - post-write read-back against a real changed subject
 
 A real write remains intentionally deferred until Work-level reading-state reconciliation is live-validated, so an already-read / currently-reading / other-edition Want-to-Read record cannot be silently downgraded or duplicated.
+
+## 2026-08-19 — Live Work-level reconciliation validation
+
+### Unit-test baseline
+
+The reconciliation branch was validated locally before the live read-only run:
+
+```text
+Ran 71 tests in 0.016s
+OK
+```
+
+### Live target
+
+The read-only Work inspection used Douban subject `25837854`:
+
+```text
+荷马史诗·奥德赛
+Translator: 王焕生
+Publisher: 人民文学出版社
+Published: 2015-06
+ISBN: 9787020102792
+```
+
+Command:
+
+```bash
+douban-weread inspect --subject 25837854 --limit 20
+```
+
+The live scan resolved the target and five additional same-Work editions from the current Douban title-search candidate set. All six returned no current Douban interest state:
+
+| Subject | Translator | Publisher | Published | ISBN | State |
+| --- | --- | --- | --- | --- | --- |
+| 25837854 | 王焕生 | 人民文学出版社 | 2015-06 | 9787020102792 | `NONE` |
+| 1062694 | 王焕生 | 人民文学出版社 | 1997-05 | 9787020038848 | `NONE` |
+| 34894031 | 王焕生 | 人民文学出版社 | 2020-05 | 9787020158287 | `NONE` |
+| 1777142 | 王焕生 | 人民文学出版社 | 1997-05 | 9787020024032 | `NONE` |
+| 3247025 | 王焕生 | 人民文学出版社 | 2008-06 | 9787020071319 | `NONE` |
+| 30282747 | 王焕生 | 人民文学出版社 | 2018-07 | 9787020130528 | `NONE` |
+
+Observed decision:
+
+```text
+Decision: safe_to_wish
+Safe to write Want-to-Read: True
+Requires user decision: True
+```
+
+This validates the live read-only path:
+
+```text
+exact subject fetch
+→ title candidate discovery
+→ same-Work filtering
+→ authenticated per-edition interest-state reads
+→ Work-level reconciliation decision
+```
+
+### Important limitation
+
+This result is **not proof that the user has never read or marked any edition of this Work**. The current inspector is bounded by the editions returned by the live title-search candidate scan. It does not yet index the user's complete historical `wish` / `do` / `collect` lists.
+
+Therefore `safe_to_wish` currently means only:
+
+> no conflicting state was found among the same-Work editions discovered by the current live scan.
+
+The next reliability layer remains a local Douban reading-history index before relying on reconciliation as an exhaustive forgotten-history check.
+
+### Write status
+
+No state-changing `wish` request was performed in this validation. A real write remains deferred until the account/session secret has been replaced after accidental exposure and the intended completeness boundary for historical-state checking is accepted or improved.
