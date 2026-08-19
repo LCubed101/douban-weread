@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,6 +44,35 @@ class ReadingHistoryIndexTests(unittest.TestCase):
         self.assertEqual(status.reading, 1)
         self.assertEqual(status.read, 2)
         self.assertEqual(status.last_full_sync_at, "2026-08-19T08:00:00+00:00")
+
+    def test_pre_fix_complete_zero_baseline_is_invalidated(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self.path) as conn:
+            conn.executescript(
+                """
+                CREATE TABLE history_entries (
+                    subject_id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    title_key TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL
+                );
+                CREATE TABLE history_sync_state (
+                    source TEXT PRIMARY KEY,
+                    complete INTEGER NOT NULL DEFAULT 0,
+                    last_full_sync_at TEXT,
+                    counts_json TEXT NOT NULL DEFAULT '{}'
+                );
+                INSERT INTO history_sync_state(source, complete, last_full_sync_at, counts_json)
+                VALUES ('douban', 1, '2026-08-19T09:03:30+00:00', '{}');
+                """
+            )
+
+        status = self.index.status()
+
+        self.assertTrue(status.initialized)
+        self.assertFalse(status.complete)
+        self.assertEqual(status.total, 0)
 
     def test_full_replace_is_a_snapshot_not_an_append(self) -> None:
         self.index.replace_full(
