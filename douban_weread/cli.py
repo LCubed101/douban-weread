@@ -4,6 +4,7 @@ import argparse
 import os
 import sys
 from collections.abc import Callable, Sequence
+from http.cookies import SimpleCookie
 from typing import Protocol, TextIO
 
 from douban_weread.core.models import Edition
@@ -40,6 +41,14 @@ SearchClientFactory = Callable[[], BookSearchClient]
 InterestClientFactory = Callable[[], BookInterestClient]
 
 
+def _read_cookie_env() -> str:
+    """Return the locally configured Cookie header value in normalized form."""
+    cookie = os.getenv("DOUBAN_COOKIE", "").strip()
+    if "\n" not in cookie and cookie.lower().startswith("cookie:"):
+        cookie = cookie.split(":", 1)[1].strip()
+    return cookie
+
+
 def _default_interest_client() -> DoubanBookInterestClient:
     """Build the auth client from the local environment.
 
@@ -48,10 +57,35 @@ def _default_interest_client() -> DoubanBookInterestClient:
     one-line copy format, but do not try to parse multi-line request dumps or
     shell commands.
     """
-    cookie = os.getenv("DOUBAN_COOKIE", "").strip()
-    if "\n" not in cookie and cookie.lower().startswith("cookie:"):
-        cookie = cookie.split(":", 1)[1].strip()
-    return DoubanBookInterestClient(cookie=cookie)
+    return DoubanBookInterestClient(cookie=_read_cookie_env())
+
+
+def _diagnose_cookie_input() -> tuple[str, list[str]]:
+    """Classify DOUBAN_COOKIE without exposing any credential values."""
+    raw = _read_cookie_env()
+    if not raw:
+        return "empty", []
+    if "\n" in raw:
+        return "multiline_input", []
+
+    lowered = raw.lstrip().lower()
+    if lowered.startswith("curl "):
+        return "curl_command", []
+    if raw.lstrip().startswith(("{", "[")):
+        return "json_or_cookie_export", []
+
+    jar = SimpleCookie()
+    try:
+        jar.load(raw)
+    except Exception:
+        return "unparseable_cookie_header", []
+
+    names = sorted(jar.keys())
+    if names:
+        return "cookie_header", names
+    if "=" not in raw:
+        return "not_cookie_header", []
+    return "empty_parse", []
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -78,9 +112,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     auth = subparsers.add_parser(
         "auth",
-        help="Check whether the locally configured Douban Cookie is usable.",
+        help="Inspect or check the locally configured Douban Cookie.",
     )
     auth_subparsers = auth.add_subparsers(dest="auth_command", required=True)
+    auth_subparsers.add_parser(
+        "diagnose",
+        help="Inspect Cookie structure locally without printing values or making a network request.",
+    )
     auth_check = auth_subparsers.add_parser("check", help="Validate DOUBAN_COOKIE without changing state.")
     auth_check.add_argument(
         "--probe-subject",
@@ -189,6 +227,18 @@ def run(
         except DoubanProviderError as exc:
             print(f"Douban provider error: {exc}", file=stderr)
             return EXIT_PROVIDER_ERROR
+
+    if args.command == "auth" and args.auth_command == "diagnose":
+        kind, names = _diagnose_cookie_input()
+        has_dbcl2 = "dbcl2" in names
+        has_ck = "ck" in names
+        ready = kind == "cookie_header" and has_dbcl2 and has_ck
+        print(f"Cookie input kind: {kind}", file=stdout)
+        print(f"Parsed cookie count: {len(names)}", file=stdout)
+        print(f"Has dbcl2: {has_dbcl2}", file=stdout)
+        print(f"Has ck: {has_ck}", file=stdout)
+        print(f"Ready for auth check: {ready}", file=stdout)
+        return EXIT_OK if ready else EXIT_PROVIDER_ERROR
 
     if args.command == "auth" and args.auth_command == "check":
         client = interest_client_factory()
