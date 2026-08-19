@@ -28,6 +28,7 @@ class EditionMatchResult:
     requires_confirmation: bool
     safe_to_auto_apply: bool
     reasons: list[str] = field(default_factory=list)
+    edition_differences: list[str] = field(default_factory=list)
     material_differences: list[str] = field(default_factory=list)
 
 
@@ -105,11 +106,14 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
     """Compare two editions and return an explainable, conservative match result.
 
     Only an exact ISBN match is considered safe for automatic state-changing
-    actions. Other strong matches may be recommended, but remain inspectable
-    and non-destructive by default.
+    actions. Known differences in ISBN, publisher, or publication year identify
+    a different Edition of the same Work, but do not by themselves require
+    confirmation. Translator, language, and revision/content markers are
+    material differences and do require confirmation.
     """
 
     reasons: list[str] = []
+    edition_differences: list[str] = []
     material: list[str] = []
 
     source_isbn = _norm_text(source.isbn)
@@ -125,6 +129,9 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
             safe_to_auto_apply=True,
             reasons=["exact ISBN match"],
         )
+    if source_isbn and candidate_isbn and source_isbn != candidate_isbn:
+        edition_differences.append("ISBN differs")
+        reasons.append("ISBN differs")
 
     title_similarity = _title_similarity(source.title, candidate.title)
     source_authors = _norm_people(source.authors)
@@ -148,15 +155,23 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
 
     source_publisher = _norm_text(source.publisher)
     candidate_publisher = _norm_text(candidate.publisher)
-    if source_publisher and candidate_publisher and source_publisher == candidate_publisher:
-        score += 0.08
-        reasons.append("publisher matches")
+    if source_publisher and candidate_publisher:
+        if source_publisher == candidate_publisher:
+            score += 0.08
+            reasons.append("publisher matches")
+        else:
+            edition_differences.append("publisher differs")
+            reasons.append("publisher differs")
 
     source_year = _publish_year(source.publish_date)
     candidate_year = _publish_year(candidate.publish_date)
-    if source_year and candidate_year and source_year == candidate_year:
-        score += 0.07
-        reasons.append("publication year matches")
+    if source_year and candidate_year:
+        if source_year == candidate_year:
+            score += 0.07
+            reasons.append("publication year matches")
+        else:
+            edition_differences.append("publication year differs")
+            reasons.append("publication year differs")
 
     source_language = _norm_text(source.language)
     candidate_language = _norm_text(candidate.language)
@@ -193,12 +208,16 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
             requires_confirmation=True,
             safe_to_auto_apply=False,
             reasons=reasons,
+            edition_differences=edition_differences,
             material_differences=material,
         )
 
     if material:
         kind = MatchKind.ALTERNATIVE_EDITION
         requires_confirmation = True
+    elif edition_differences:
+        kind = MatchKind.ALTERNATIVE_EDITION
+        requires_confirmation = False
     elif score >= 0.70:
         kind = MatchKind.LIKELY_SAME_EDITION
         requires_confirmation = False
@@ -215,6 +234,7 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
         requires_confirmation=requires_confirmation,
         safe_to_auto_apply=False,
         reasons=reasons,
+        edition_differences=edition_differences,
         material_differences=material,
     )
 
