@@ -10,6 +10,47 @@ A book title is not a unique identity. The same work may have multiple editions 
 
 `douban-weread` identifies the work and edition you discovered, checks what is actually available on WeRead, and then aligns your active Douban “Want to Read” edition with the practical edition you can read on WeRead.
 
+## Quick start: CLI search
+
+The first interface-independent demo can search Douban by title or ISBN without Feishu or WeRead credentials.
+
+```bash
+git clone https://github.com/LCubed101/douban-weread.git
+cd douban-weread
+python -m pip install -e .
+```
+
+If your Douban API access requires a key, set it locally (never commit it):
+
+```bash
+export DOUBAN_API_KEY="your-key"
+```
+
+Search by title:
+
+```bash
+python -m douban_weread search "百年孤独"
+# or, after installation:
+douban-weread search "百年孤独"
+```
+
+Search an exact edition by ISBN:
+
+```bash
+python -m douban_weread search --isbn 9787544253994
+```
+
+A title search intentionally prints multiple candidate editions when available so the user can compare translator, publisher, publication date, and ISBN before any future state-changing action.
+
+CLI exit codes:
+
+- `0` — success
+- `1` — Douban provider/network error
+- `2` — invalid CLI arguments (standard `argparse` behavior)
+- `3` — no matching edition found
+
+> The current Douban provider is an early, read-only adapter. Endpoint availability may vary; tests use mocked responses and do not depend on live Douban access.
+
 ## User flow
 
 ```mermaid
