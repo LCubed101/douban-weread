@@ -1,46 +1,33 @@
 # History-aware reconciliation validation
 
-This file records validation for the stacked history-aware reconciliation layer on top of the already live-validated Reading History Index foundation.
+## 2026-08-19 — local regression suite
 
-## 2026-08-19 — Local regression validation
+Branch: `agent/history-aware-reconciliation`
 
-Branch:
-
-```text
-agent/history-aware-reconciliation
-```
-
-The complete test suite passed locally:
+The complete suite passed locally before live provider validation:
 
 ```text
 Ran 103 tests in 0.240s
 OK
 ```
 
-The run includes regression coverage for:
+The run includes coverage for:
 
-- a historical same-Work Edition absent from live title search;
-- incomplete history baseline failing closed;
-- a historical `READ` surviving a weaker live `NONE`;
-- a newer live `READ` overriding an older local `WISH`;
-- CLI `inspect` refusing an incomplete history baseline;
-- a verified project-owned `wish` updating the local history index only after successful remote write verification.
+- historical same-Work editions missing from live title search;
+- incomplete history baseline fail-closed behavior;
+- historical `READ` surviving a weaker live `NONE`;
+- newer live `READ` overriding an older local `WISH`;
+- CLI `inspect` refusing an incomplete baseline;
+- verified project-owned `wish` updating the local index only after remote write verification.
 
-This validates the code path only. A real read-only provider run is still required to prove that the local 1747-row baseline contributes a same-Work historical record to live `inspect` behavior.
+No state-changing Douban write was performed.
 
-## Next live validation
+## Live provider status
 
-Use a target Edition whose same Work is already present in the local history baseline, preferably under a different Douban subject ID. Run `inspect` only; do not perform a real `wish` write.
+The next planned validation was a read-only `白夜行` inspection using the complete local history baseline. Before any authenticated write, a public title search was attempted with `DOUBAN_COOKIE` unset and returned HTTP 403. A single exact subject-detail fetch from the same local runtime also returned HTTP 403 after a redirect.
 
-Expected path:
+Because both public search and exact subject detail were rejected, live history-aware reconciliation validation is currently **blocked by provider access**, not by a failing regression test.
 
-```text
-target Edition
-→ complete local history shortlist
-→ lazy metadata fetch for shortlisted subject IDs
-→ resolver confirms same Work
-→ historical READ / READING / WISH enters reconciliation
-→ write-safety decision fails closed or asks for review as appropriate
-```
+The failure is documented as `docs/pitfalls/PIT-023-public-read-403-after-history-sync.md`.
 
-No real state-changing Douban write has been performed in this layer.
+Do not repeatedly retry or attempt to bypass provider anti-abuse controls. Resume later with one low-volume read-only probe. Until then, the already-synced local history baseline remains usable for local-only lookup, but a live `inspect` cannot complete because Edition metadata and current provider state reads still require Douban access.
