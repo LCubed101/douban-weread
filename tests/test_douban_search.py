@@ -14,6 +14,7 @@ class DoubanBookSearchClientTests(unittest.TestCase):
         def transport(url: str, headers: dict[str, str]) -> _JsonResponse:
             self.assertIn("q=%E7%99%BE%E5%B9%B4%E5%AD%A4%E7%8B%AC", url)
             self.assertEqual(headers["Accept"], "application/json")
+            self.assertTrue(headers["User-Agent"].startswith("Mozilla/5.0"))
             return _JsonResponse(
                 status=200,
                 payload={
@@ -51,6 +52,14 @@ class DoubanBookSearchClientTests(unittest.TestCase):
         self.assertEqual(results[0].publish_date, "2011-06")
         self.assertEqual(results[0].isbn, "9787544253994")
         self.assertEqual(results[1].publish_date, "2024")
+
+    def test_custom_user_agent_is_preserved(self) -> None:
+        def transport(url: str, headers: dict[str, str]) -> _JsonResponse:
+            self.assertEqual(headers["User-Agent"], "custom-agent")
+            return _JsonResponse(status=200, payload={"books": []})
+
+        client = DoubanBookSearchClient(user_agent="custom-agent", transport=transport)
+        self.assertEqual(client.search_by_title("test"), [])
 
     def test_search_by_isbn_returns_exact_edition(self) -> None:
         def transport(url: str, headers: dict[str, str]) -> _JsonResponse:
