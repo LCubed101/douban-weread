@@ -40,8 +40,33 @@ class EditionMatchingTests(unittest.TestCase):
         self.assertTrue(result.exact_edition)
         self.assertFalse(result.requires_confirmation)
         self.assertTrue(result.safe_to_auto_apply)
+        self.assertEqual(result.edition_differences, [])
 
-    def test_same_work_same_translator_different_publisher_is_recommended(self) -> None:
+    def test_different_isbn_is_alternative_even_with_matching_metadata(self) -> None:
+        source = edition(
+            isbn="9787544253994",
+            translators=["范晔"],
+            publisher="南海出版公司",
+            publish_date="2011-06",
+        )
+        candidate = edition(
+            isbn="9787544291170",
+            translators=["范晔"],
+            publisher="南海出版公司",
+            publish_date="2017-08",
+        )
+
+        result = compare_editions(source, candidate)
+
+        self.assertTrue(result.same_work)
+        self.assertEqual(result.kind, MatchKind.ALTERNATIVE_EDITION)
+        self.assertFalse(result.requires_confirmation)
+        self.assertFalse(result.safe_to_auto_apply)
+        self.assertIn("ISBN differs", result.edition_differences)
+        self.assertIn("publication year differs", result.edition_differences)
+        self.assertEqual(result.material_differences, [])
+
+    def test_same_work_same_translator_different_publisher_is_alternative(self) -> None:
         source = edition(
             authors=["[哥伦比亚] 加西亚·马尔克斯"],
             translators=["范晔"],
@@ -52,16 +77,35 @@ class EditionMatchingTests(unittest.TestCase):
             authors=["加西亚·马尔克斯"],
             translators=["范晔"],
             publisher="另一出版社",
-            publish_date="2024-01",
+            publish_date="2011-10",
         )
 
         result = compare_editions(source, candidate)
 
         self.assertTrue(result.same_work)
-        self.assertEqual(result.kind, MatchKind.LIKELY_SAME_EDITION)
+        self.assertEqual(result.kind, MatchKind.ALTERNATIVE_EDITION)
         self.assertFalse(result.requires_confirmation)
         self.assertFalse(result.safe_to_auto_apply)
+        self.assertIn("publisher differs", result.edition_differences)
         self.assertEqual(result.material_differences, [])
+
+    def test_different_publication_year_is_alternative(self) -> None:
+        source = edition(
+            translators=["范晔"],
+            publisher="南海出版公司",
+            publish_date="2011-06",
+        )
+        candidate = edition(
+            translators=["范晔"],
+            publisher="南海出版公司",
+            publish_date="2020-09",
+        )
+
+        result = compare_editions(source, candidate)
+
+        self.assertEqual(result.kind, MatchKind.ALTERNATIVE_EDITION)
+        self.assertFalse(result.requires_confirmation)
+        self.assertIn("publication year differs", result.edition_differences)
 
     def test_different_translator_requires_confirmation(self) -> None:
         source = edition(translators=["范晔"])
@@ -129,6 +173,7 @@ class EditionMatchingTests(unittest.TestCase):
         self.assertEqual(ranked[0].kind, MatchKind.EXACT_EDITION)
         self.assertIs(ranked[0].candidate, exact)
         self.assertTrue(ranked[1].same_work)
+        self.assertEqual(ranked[1].kind, MatchKind.ALTERNATIVE_EDITION)
         self.assertFalse(ranked[-1].same_work)
 
 
