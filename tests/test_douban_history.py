@@ -31,6 +31,23 @@ PAGE_2 = """
 </body></html>
 """
 
+CURRENT_SUBJECT_ITEM_PAGE = """
+<html>
+<head><title>测试用户想读的书(2)</title></head>
+<body>
+<ul class="interest-list">
+  <li class="subject-item">
+    <div class="pic"><a href="https://book.douban.com/subject/25837854/"><img src="x"></a></div>
+    <div class="info"><h2><a href="https://book.douban.com/subject/25837854/" title="荷马史诗·奥德赛">荷马史诗·奥德赛</a></h2></div>
+  </li>
+  <li class="subject-item">
+    <div class="info"><h2><a href="https://book.douban.com/subject/6082808/" title="百年孤独">百年孤独</a></h2></div>
+  </li>
+</ul>
+</body>
+</html>
+"""
+
 
 class DoubanBookHistoryClientTests(unittest.TestCase):
     def test_fetch_state_follows_pagination_and_deduplicates_subject_links(self) -> None:
@@ -61,6 +78,59 @@ class DoubanBookHistoryClientTests(unittest.TestCase):
         )
         self.assertEqual(len(requested), 2)
         self.assertTrue(all("/people/123456/wish" in url for url in requested))
+
+    def test_current_subject_item_markup_is_parsed(self) -> None:
+        def transport(url: str, headers: dict[str, str]) -> _HistoryResponse:
+            return _HistoryResponse(200, CURRENT_SUBJECT_ITEM_PAGE, url)
+
+        client = DoubanBookHistoryClient(
+            'dbcl2="123456:test-session"; ck=test-csrf',
+            transport=transport,
+        )
+        entries = client.fetch_state("wish")
+
+        self.assertEqual(
+            [(entry.subject_id, entry.title) for entry in entries],
+            [("25837854", "荷马史诗·奥德赛"), ("6082808", "百年孤独")],
+        )
+
+    def test_declared_nonempty_list_with_zero_parsed_entries_fails_closed(self) -> None:
+        body = "<html><head><title>测试用户想读的书(12)</title></head><body></body></html>"
+
+        def transport(url: str, headers: dict[str, str]) -> _HistoryResponse:
+            return _HistoryResponse(200, body, url)
+
+        client = DoubanBookHistoryClient(
+            'dbcl2="123456:test-session"; ck=test-csrf',
+            transport=transport,
+        )
+        with self.assertRaisesRegex(DoubanProviderError, "declared 12 entries but parsed 0"):
+            client.fetch_state("wish")
+
+    def test_declared_total_must_match_all_parsed_pages(self) -> None:
+        body = CURRENT_SUBJECT_ITEM_PAGE.replace("(2)", "(3)")
+
+        def transport(url: str, headers: dict[str, str]) -> _HistoryResponse:
+            return _HistoryResponse(200, body, url)
+
+        client = DoubanBookHistoryClient(
+            'dbcl2="123456:test-session"; ck=test-csrf',
+            transport=transport,
+        )
+        with self.assertRaisesRegex(DoubanProviderError, "declared 3 entries but parsed 2"):
+            client.fetch_state("wish")
+
+    def test_declared_zero_allows_a_truly_empty_state(self) -> None:
+        body = "<html><head><title>测试用户在读的书(0)</title></head><body></body></html>"
+
+        def transport(url: str, headers: dict[str, str]) -> _HistoryResponse:
+            return _HistoryResponse(200, body, url)
+
+        client = DoubanBookHistoryClient(
+            'dbcl2="123456:test-session"; ck=test-csrf',
+            transport=transport,
+        )
+        self.assertEqual(client.fetch_state("do"), [])
 
     def test_fetch_all_reads_wish_do_collect(self) -> None:
         states_seen: list[str] = []
