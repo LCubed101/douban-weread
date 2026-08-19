@@ -1,0 +1,1 @@
+"""douban-weread core package."""
