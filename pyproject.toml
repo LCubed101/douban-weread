@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "douban-weread"
+version = "0.1.0"
+description = "Align Douban Want-to-Read editions with editions available on WeRead."
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [{name = "douban-weread contributors"}]
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["douban_weread*"]
