@@ -49,6 +49,8 @@ CLI exit codes:
 
 > The current Douban provider is read-only and uses public Douban Book web search plus subject pages. It does not depend on the legacy `api.douban.com/v2/book` endpoint. Because this is an unofficial web integration, Douban page structure or anti-bot behavior may change and should be handled conservatively.
 
+For real-world failure modes and fixes, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). For successful end-to-end smoke-test snapshots, see [docs/LIVE_VALIDATION.md](docs/LIVE_VALIDATION.md).
+
 ## User flow
 
 ```mermaid
