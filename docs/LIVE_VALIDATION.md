@@ -384,3 +384,29 @@ This live-validates the corrected `li.subject-item` history ingestion path, pagi
 The full-history baseline is now available for local-first candidate discovery. The next integration step is to use this baseline to shortlist historical subject IDs, resolve full Edition metadata only for those candidates, and feed the verified same-Work records into reconciliation before any state-changing `wish` action.
 
 No real state-changing Douban write was performed during this validation.
+
+### Local-only lookup after Cookie removal
+
+After the full sync, the temporary `DOUBAN_COOKIE` was removed and the local index was queried without provider access.
+
+`history status` continued to report the persisted baseline counts:
+
+```text
+Want-to-Read: 1511
+Reading: 40
+Read: 196
+Last full sync: 2026-08-19T09:40:22.610918+00:00
+Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
+```
+
+A local title lookup for the previously inspected target returned no candidates:
+
+```bash
+douban-weread history lookup "荷马史诗：奥德赛"
+```
+
+```text
+No local history candidates found for "荷马史诗：奥德赛".
+```
+
+This validates the local-only negative lookup path. It is not considered a parser failure: the baseline remains complete, and the lookup result simply means no stored history title passed the local candidate threshold for this query. A positive lookup against a title known to exist in the user's history is still needed before the local lookup layer is considered fully live-validated.
