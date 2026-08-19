@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from douban_weread.core.models import Edition
+from douban_weread.providers.douban.normalize import normalize_douban_edition, normalize_isbn
 
 
 DEFAULT_BASE_URL = "https://api.douban.com/v2/book"
@@ -51,7 +52,7 @@ class DoubanBookSearchClient:
         self._transport = transport or self._default_transport
 
     def search_by_title(self, title: str, *, count: int = 20) -> list[Edition]:
-        """Return candidate Douban editions for a title query."""
+        """Return normalized candidate Douban editions for a title query."""
         query = title.strip()
         if not query:
             return []
@@ -61,11 +62,11 @@ class DoubanBookSearchClient:
         books = payload.get("books", [])
         if not isinstance(books, list):
             raise DoubanProviderError("Douban search response did not contain a valid books list")
-        return [edition for item in books if (edition := self._to_edition(item)) is not None]
+        return [edition for item in books if (edition := normalize_douban_edition(item)) is not None]
 
     def search_by_isbn(self, isbn: str) -> Edition | None:
-        """Return the exact Douban edition for an ISBN when available."""
-        normalized = self._normalize_isbn(isbn)
+        """Return the exact normalized Douban edition for an ISBN when available."""
+        normalized = normalize_isbn(isbn)
         if not normalized:
             return None
 
@@ -76,7 +77,7 @@ class DoubanBookSearchClient:
             if "HTTP 404" in str(exc):
                 return None
             raise
-        return self._to_edition(payload)
+        return normalize_douban_edition(payload)
 
     def _get_json(self, url: str, params: Mapping[str, str]) -> Mapping[str, Any]:
         merged = dict(params)
@@ -105,51 +106,3 @@ class DoubanBookSearchClient:
             raise DoubanProviderError(f"Could not reach Douban: {exc.reason}") from exc
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise DoubanProviderError("Douban returned an invalid JSON response") from exc
-
-    @classmethod
-    def _to_edition(cls, raw: Any) -> Edition | None:
-        if not isinstance(raw, Mapping):
-            return None
-
-        title = cls._clean_text(raw.get("title"))
-        douban_id = cls._clean_text(raw.get("id"))
-        if not title or not douban_id:
-            return None
-
-        authors = cls._join_people(raw.get("author"))
-        translators = cls._join_people(raw.get("translator"))
-        isbn = cls._normalize_isbn(raw.get("isbn13") or raw.get("isbn10") or "") or None
-
-        images = raw.get("images")
-        cover_url = None
-        if isinstance(images, Mapping):
-            cover_url = cls._clean_text(images.get("large") or images.get("medium") or images.get("small"))
-        if not cover_url:
-            cover_url = cls._clean_text(raw.get("image"))
-
-        return Edition(
-            title=title,
-            author=authors,
-            translator=translators or None,
-            publisher=cls._clean_text(raw.get("publisher")) or None,
-            publish_date=cls._clean_text(raw.get("pubdate")) or None,
-            isbn=isbn,
-            cover_url=cover_url or None,
-            douban_id=douban_id,
-        )
-
-    @staticmethod
-    def _clean_text(value: Any) -> str:
-        if value is None:
-            return ""
-        return " ".join(str(value).split())
-
-    @classmethod
-    def _join_people(cls, value: Any) -> str:
-        if isinstance(value, list):
-            return " / ".join(filter(None, (cls._clean_text(item) for item in value)))
-        return cls._clean_text(value)
-
-    @staticmethod
-    def _normalize_isbn(value: Any) -> str:
-        return "".join(char for char in str(value) if char.isdigit() or char in "Xx").upper()

@@ -22,7 +22,7 @@ class EditionResolution(str, Enum):
 @dataclass(slots=True)
 class Work:
     canonical_title: str
-    author: str
+    authors: list[str] = field(default_factory=list)
     original_title: Optional[str] = None
     language: Optional[str] = None
 
@@ -30,8 +30,8 @@ class Work:
 @dataclass(slots=True)
 class Edition:
     title: str
-    author: str
-    translator: Optional[str] = None
+    authors: list[str] = field(default_factory=list)
+    translators: list[str] = field(default_factory=list)
     publisher: Optional[str] = None
     publish_date: Optional[str] = None
     isbn: Optional[str] = None
@@ -39,6 +39,7 @@ class Edition:
     cover_url: Optional[str] = None
     douban_id: Optional[str] = None
     weread_id: Optional[str] = None
+    source_metadata: dict[str, object] = field(default_factory=dict, repr=False)
 
 
 @dataclass(slots=True)

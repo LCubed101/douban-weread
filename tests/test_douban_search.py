@@ -10,7 +10,7 @@ from douban_weread.providers.douban.search import (
 
 
 class DoubanBookSearchClientTests(unittest.TestCase):
-    def test_search_by_title_returns_candidates(self) -> None:
+    def test_search_by_title_returns_normalized_candidates(self) -> None:
         def transport(url: str, headers: dict[str, str]) -> _JsonResponse:
             self.assertIn("q=%E7%99%BE%E5%B9%B4%E5%AD%A4%E7%8B%AC", url)
             self.assertEqual(headers["Accept"], "application/json")
@@ -20,7 +20,7 @@ class DoubanBookSearchClientTests(unittest.TestCase):
                     "books": [
                         {
                             "id": "6082808",
-                            "title": "百年孤独",
+                            "title": " 百年孤独 ",
                             "author": ["[哥伦比亚] 加西亚·马尔克斯"],
                             "translator": ["范晔"],
                             "publisher": "南海出版公司",
@@ -44,9 +44,13 @@ class DoubanBookSearchClientTests(unittest.TestCase):
         results = client.search_by_title("百年孤独")
 
         self.assertEqual(len(results), 2)
+        self.assertEqual(results[0].title, "百年孤独")
         self.assertEqual(results[0].douban_id, "6082808")
-        self.assertEqual(results[0].translator, "范晔")
+        self.assertEqual(results[0].authors, ["[哥伦比亚] 加西亚·马尔克斯"])
+        self.assertEqual(results[0].translators, ["范晔"])
+        self.assertEqual(results[0].publish_date, "2011-06")
         self.assertEqual(results[0].isbn, "9787544253994")
+        self.assertEqual(results[1].publish_date, "2024")
 
     def test_search_by_isbn_returns_exact_edition(self) -> None:
         def transport(url: str, headers: dict[str, str]) -> _JsonResponse:
@@ -59,7 +63,7 @@ class DoubanBookSearchClientTests(unittest.TestCase):
                     "author": ["加西亚·马尔克斯"],
                     "translator": ["范晔"],
                     "publisher": "南海出版公司",
-                    "pubdate": "2011-6",
+                    "pubdate": "2011年6月",
                     "isbn13": "978-7-5442-5399-4",
                 },
             )
@@ -70,6 +74,7 @@ class DoubanBookSearchClientTests(unittest.TestCase):
         self.assertIsNotNone(result)
         assert result is not None
         self.assertEqual(result.isbn, "9787544253994")
+        self.assertEqual(result.publish_date, "2011-06")
         self.assertEqual(result.douban_id, "6082808")
 
     def test_unknown_isbn_returns_none_on_404(self) -> None:
