@@ -15,6 +15,7 @@ from douban_weread.providers.douban.history import HistoryEntry
 
 _HISTORY_STATES = {"wish", "do", "collect"}
 _NON_WORD_RE = re.compile(r"[^\w\u4e00-\u9fff]+", re.UNICODE)
+_BASELINE_VERSION = 2
 
 
 @dataclass(slots=True, frozen=True)
@@ -87,10 +88,21 @@ class ReadingHistoryIndex:
                     source TEXT PRIMARY KEY,
                     complete INTEGER NOT NULL DEFAULT 0,
                     last_full_sync_at TEXT,
-                    counts_json TEXT NOT NULL DEFAULT '{}'
+                    counts_json TEXT NOT NULL DEFAULT '{}',
+                    baseline_version INTEGER NOT NULL DEFAULT 0
                 );
                 """
             )
+
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(history_sync_state)").fetchall()
+            }
+            if "baseline_version" not in columns:
+                conn.execute(
+                    "ALTER TABLE history_sync_state "
+                    "ADD COLUMN baseline_version INTEGER NOT NULL DEFAULT 0"
+                )
 
     def replace_full(self, entries: list[HistoryEntry], *, synced_at: str | None = None) -> None:
         """Atomically replace the Douban baseline only after a full fetch succeeds."""
@@ -139,14 +151,17 @@ class ReadingHistoryIndex:
             )
             conn.execute(
                 """
-                INSERT INTO history_sync_state(source, complete, last_full_sync_at, counts_json)
-                VALUES ('douban', 1, ?, ?)
+                INSERT INTO history_sync_state(
+                    source, complete, last_full_sync_at, counts_json, baseline_version
+                )
+                VALUES ('douban', 1, ?, ?, ?)
                 ON CONFLICT(source) DO UPDATE SET
                     complete=excluded.complete,
                     last_full_sync_at=excluded.last_full_sync_at,
-                    counts_json=excluded.counts_json
+                    counts_json=excluded.counts_json,
+                    baseline_version=excluded.baseline_version
                 """,
-                (timestamp, json.dumps(counts, sort_keys=True)),
+                (timestamp, json.dumps(counts, sort_keys=True), _BASELINE_VERSION),
             )
             conn.commit()
 
@@ -166,7 +181,10 @@ class ReadingHistoryIndex:
         self.initialize()
         with self._connect() as conn:
             sync = conn.execute(
-                "SELECT complete, last_full_sync_at FROM history_sync_state WHERE source='douban'"
+                """
+                SELECT complete, last_full_sync_at, baseline_version
+                FROM history_sync_state WHERE source='douban'
+                """
             ).fetchone()
             counts = dict(
                 conn.execute(
@@ -177,10 +195,11 @@ class ReadingHistoryIndex:
         wish = int(counts.get("wish", 0))
         reading = int(counts.get("do", 0))
         read = int(counts.get("collect", 0))
+        complete = bool(sync[0]) and int(sync[2]) == _BASELINE_VERSION if sync else False
         return HistoryIndexStatus(
             path=self.path,
             initialized=True,
-            complete=bool(sync[0]) if sync else False,
+            complete=complete,
             last_full_sync_at=sync[1] if sync else None,
             total=wish + reading + read,
             wish=wish,
