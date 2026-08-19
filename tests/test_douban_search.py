@@ -99,6 +99,30 @@ class DoubanBookSearchClientTests(unittest.TestCase):
         self.assertEqual(result.douban_id, "6082808")
         self.assertEqual(result.isbn, "9787544253994")
 
+    def test_get_by_subject_id_fetches_exact_subject_without_search(self) -> None:
+        requested: list[str] = []
+
+        def transport(url: str, headers: dict[str, str]) -> _TextResponse:
+            requested.append(url)
+            self.assertNotIn("subject_search", url)
+            return _TextResponse(status=200, body=SUBJECT_6082808_HTML)
+
+        client = DoubanBookSearchClient(transport=transport)
+        result = client.get_by_subject_id("6082808")
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.douban_id, "6082808")
+        self.assertEqual(requested, ["https://book.douban.com/subject/6082808/"])
+
+    def test_get_by_subject_id_rejects_non_numeric_input_before_network(self) -> None:
+        def transport(url: str, headers: dict[str, str]) -> _TextResponse:
+            raise AssertionError("transport should not be called")
+
+        client = DoubanBookSearchClient(transport=transport)
+        with self.assertRaises(ValueError):
+            client.get_by_subject_id("../6082808")
+
     def test_unknown_isbn_returns_none(self) -> None:
         def transport(url: str, headers: dict[str, str]) -> _TextResponse:
             return _TextResponse(status=200, body="<html><body>No matches</body></html>")

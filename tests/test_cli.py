@@ -11,6 +11,7 @@ from douban_weread.cli import (
     EXIT_NO_RESULTS,
     EXIT_OK,
     EXIT_PROVIDER_ERROR,
+    EXIT_RECONCILIATION_REQUIRED,
     EXIT_WRITE_VERIFICATION_ERROR,
     _default_interest_client,
     _diagnose_cookie_input,
@@ -19,7 +20,6 @@ from douban_weread.cli import (
 )
 from douban_weread.core.models import Edition
 from douban_weread.providers.douban import (
-    DoubanConfirmationRequired,
     DoubanProviderError,
     DoubanWriteVerificationError,
 )
@@ -29,15 +29,17 @@ class FakeClient:
     def __init__(self) -> None:
         self.title_results: list[Edition] = []
         self.isbn_result: Edition | None = None
+        self.subject_result: Edition | None = None
         self.raise_error: Exception | None = None
         self.last_title: tuple[str, int] | None = None
         self.last_isbn: str | None = None
+        self.last_subject: str | None = None
 
     def search_by_title(self, title: str, *, count: int = 20) -> list[Edition]:
         if self.raise_error:
             raise self.raise_error
         self.last_title = (title, count)
-        return self.title_results
+        return self.title_results[:count]
 
     def search_by_isbn(self, isbn: str) -> Edition | None:
         if self.raise_error:
@@ -45,13 +47,20 @@ class FakeClient:
         self.last_isbn = isbn
         return self.isbn_result
 
+    def get_by_subject_id(self, subject_id: str) -> Edition | None:
+        if self.raise_error:
+            raise self.raise_error
+        self.last_subject = subject_id
+        return self.subject_result
+
 
 class FakeInterestClient:
     def __init__(self) -> None:
         self.auth_status = SimpleNamespace(ok=True, reason="ok", message="Cookie accepted.", user_id="123456")
+        self.statuses: dict[str, str | None] = {}
         self.current_status: str | None = None
-        self.mark_result = SimpleNamespace(subject_id="6082808", verified=True)
-        self.raise_error: Exception | None = None
+        self.mark_error: Exception | None = None
+        self.status_error: Exception | None = None
         self.last_probe: str | None = None
         self.last_status_subject: str | None = None
         self.last_mark: tuple[str, bool] | None = None
@@ -62,15 +71,15 @@ class FakeInterestClient:
 
     def get_interest_status(self, subject_id: str) -> str | None:
         self.last_status_subject = subject_id
-        if self.raise_error:
-            raise self.raise_error
-        return self.current_status
+        if self.status_error:
+            raise self.status_error
+        return self.statuses.get(subject_id, self.current_status)
 
     def mark_wish(self, subject_id: str, *, confirmed: bool = False):
         self.last_mark = (subject_id, confirmed)
-        if self.raise_error:
-            raise self.raise_error
-        return self.mark_result
+        if self.mark_error:
+            raise self.mark_error
+        return SimpleNamespace(subject_id=subject_id, verified=True)
 
 
 def sample_edition(**overrides: object) -> Edition:
@@ -85,6 +94,14 @@ def sample_edition(**overrides: object) -> Edition:
     }
     values.update(overrides)
     return Edition(**values)  # type: ignore[arg-type]
+
+
+def older_same_work() -> Edition:
+    return sample_edition(
+        publish_date="2001-08",
+        isbn="9787544218566",
+        douban_id="2008724",
+    )
 
 
 class CliTests(unittest.TestCase):
@@ -294,9 +311,32 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, EXIT_OK)
         self.assertIn("interest: none", stdout.getvalue())
 
-    def test_wish_without_confirm_returns_confirmation_exit_code(self) -> None:
+    def test_inspect_reports_existing_read_other_edition_without_mutation(self) -> None:
+        target = sample_edition()
+        older = older_same_work()
+        search = FakeClient()
+        search.subject_result = target
+        search.title_results = [target, older]
         interest = FakeInterestClient()
-        interest.raise_error = DoubanConfirmationRequired("explicit confirmation required")
+        interest.statuses = {"6082808": None, "2008724": "collect"}
+        stdout = io.StringIO()
+
+        code = run(
+            ["inspect", "--subject", "6082808"],
+            client_factory=lambda: search,
+            interest_client_factory=lambda: interest,
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("Decision: ask_reread", stdout.getvalue())
+        self.assertIn("READ | subject 2008724", stdout.getvalue())
+        self.assertIn("Safe to write Want-to-Read: False", stdout.getvalue())
+        self.assertIsNone(interest.last_mark)
+
+    def test_wish_without_confirm_returns_before_reconciliation(self) -> None:
+        interest = FakeInterestClient()
         stderr = io.StringIO()
 
         code = run(
@@ -307,15 +347,66 @@ class CliTests(unittest.TestCase):
         )
 
         self.assertEqual(code, EXIT_CONFIRMATION_REQUIRED)
-        self.assertEqual(interest.last_mark, ("6082808", False))
-        self.assertIn("Confirmation required", stderr.getvalue())
+        self.assertIsNone(interest.last_mark)
+        self.assertIsNone(interest.last_status_subject)
+        self.assertIn("--confirm", stderr.getvalue())
 
-    def test_confirmed_wish_prints_verified_success(self) -> None:
+    def test_confirmed_wish_is_blocked_when_other_edition_was_read(self) -> None:
+        target = sample_edition()
+        older = older_same_work()
+        search = FakeClient()
+        search.subject_result = target
+        search.title_results = [target, older]
         interest = FakeInterestClient()
+        interest.statuses = {"6082808": None, "2008724": "collect"}
+        stderr = io.StringIO()
+
+        code = run(
+            ["wish", "--subject", "6082808", "--confirm"],
+            client_factory=lambda: search,
+            interest_client_factory=lambda: interest,
+            stdout=io.StringIO(),
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, EXIT_RECONCILIATION_REQUIRED)
+        self.assertIsNone(interest.last_mark)
+        self.assertIn("Decision: ask_reread", stderr.getvalue())
+        self.assertIn("no write was performed", stderr.getvalue())
+
+    def test_confirmed_wish_noops_when_target_is_already_wish(self) -> None:
+        target = sample_edition()
+        search = FakeClient()
+        search.subject_result = target
+        search.title_results = [target]
+        interest = FakeInterestClient()
+        interest.statuses = {"6082808": "wish"}
         stdout = io.StringIO()
 
         code = run(
             ["wish", "--subject", "6082808", "--confirm"],
+            client_factory=lambda: search,
+            interest_client_factory=lambda: interest,
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+
+        self.assertEqual(code, EXIT_OK)
+        self.assertIsNone(interest.last_mark)
+        self.assertIn("already marked Want-to-Read", stdout.getvalue())
+
+    def test_confirmed_wish_writes_only_after_safe_reconciliation(self) -> None:
+        target = sample_edition()
+        search = FakeClient()
+        search.subject_result = target
+        search.title_results = [target]
+        interest = FakeInterestClient()
+        interest.statuses = {"6082808": None}
+        stdout = io.StringIO()
+
+        code = run(
+            ["wish", "--subject", "6082808", "--confirm"],
+            client_factory=lambda: search,
             interest_client_factory=lambda: interest,
             stdout=stdout,
             stderr=io.StringIO(),
@@ -325,13 +416,19 @@ class CliTests(unittest.TestCase):
         self.assertEqual(interest.last_mark, ("6082808", True))
         self.assertIn("saved state was verified", stdout.getvalue())
 
-    def test_wish_verification_failure_has_distinct_exit_code(self) -> None:
+    def test_wish_verification_failure_has_distinct_exit_code_after_safe_reconciliation(self) -> None:
+        target = sample_edition()
+        search = FakeClient()
+        search.subject_result = target
+        search.title_results = [target]
         interest = FakeInterestClient()
-        interest.raise_error = DoubanWriteVerificationError("expected wish, got do")
+        interest.statuses = {"6082808": None}
+        interest.mark_error = DoubanWriteVerificationError("expected wish, got do")
         stderr = io.StringIO()
 
         code = run(
             ["wish", "--subject", "6082808", "--confirm"],
+            client_factory=lambda: search,
             interest_client_factory=lambda: interest,
             stdout=io.StringIO(),
             stderr=stderr,

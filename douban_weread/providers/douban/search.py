@@ -27,6 +27,7 @@ _SUBJECT_ID_RE = re.compile(
     r"(?:https?://book\.douban\.com)?/subject/(?P<id>\d+)/?",
     re.IGNORECASE,
 )
+_SUBJECT_ID_ONLY_RE = re.compile(r"^\d+$")
 _TITLE_RE = re.compile(
     r"<span[^>]+property=[\"']v:itemreviewed[\"'][^>]*>(?P<title>.*?)</span>",
     re.IGNORECASE | re.DOTALL,
@@ -155,6 +156,13 @@ class DoubanBookSearchClient:
             if edition is not None and edition.isbn == normalized:
                 return edition
         return None
+
+    def get_by_subject_id(self, subject_id: str) -> Edition | None:
+        """Fetch one exact Douban Book subject without fuzzy search."""
+        subject = subject_id.strip()
+        if not _SUBJECT_ID_ONLY_RE.fullmatch(subject):
+            raise ValueError("Douban subject_id must contain digits only.")
+        return self._fetch_subject(subject)
 
     def _search_subject_ids(self, query: str, *, limit: int) -> list[str]:
         params = urlencode({"search_text": query, "cat": "1001"})
