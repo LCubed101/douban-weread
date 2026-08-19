@@ -18,8 +18,8 @@ def edition(
 ) -> Edition:
     return Edition(
         title=title,
-        authors=authors or ["加西亚·马尔克斯"],
-        translators=translators or [],
+        authors=authors if authors is not None else ["加西亚·马尔克斯"],
+        translators=translators if translators is not None else [],
         publisher=publisher,
         publish_date=publish_date,
         isbn=isbn,
