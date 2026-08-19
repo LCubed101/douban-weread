@@ -107,12 +107,14 @@ class EditionMatchingTests(unittest.TestCase):
         self.assertTrue(result.requires_confirmation)
         self.assertFalse(result.safe_to_auto_apply)
 
-    def test_revision_marker_difference_is_material(self) -> None:
+    def test_revision_marker_is_same_work_but_material_edition_difference(self) -> None:
         source = edition(title="漫长的告别", authors=["雷蒙德·钱德勒"])
         candidate = edition(title="漫长的告别 修订版", authors=["雷蒙德·钱德勒"])
 
         result = compare_editions(source, candidate)
 
+        self.assertTrue(result.same_work)
+        self.assertEqual(result.kind, MatchKind.ALTERNATIVE_EDITION)
         self.assertIn("revision/abridgement/annotation markers differ", result.material_differences)
         self.assertTrue(result.requires_confirmation)
 
