@@ -56,6 +56,25 @@ def normalize_history_title(value: str) -> str:
     return _NON_WORD_RE.sub("", text)
 
 
+def _substring_score(target_key: str, candidate_key: str) -> float | None:
+    """Return a shortlist score for meaningful title containment only.
+
+    Exact equality is handled by the caller. If the query is contained in a
+    longer candidate (for example a base title plus subtitle), require at least
+    two normalized characters in the query. If the stored candidate is shorter
+    than the query, require both two characters and at least 60% coverage of the
+    query so a one-character title such as ``白`` does not become a candidate
+    for ``白夜行`` merely because it is a substring.
+    """
+    if target_key in candidate_key:
+        return 0.92 if len(target_key) >= 2 else None
+    if candidate_key in target_key:
+        coverage = len(candidate_key) / len(target_key)
+        if len(candidate_key) >= 2 and coverage >= 0.60:
+            return 0.92
+    return None
+
+
 class ReadingHistoryIndex:
     """Local-first SQLite index for platform reading history.
 
@@ -257,10 +276,13 @@ class ReadingHistoryIndex:
             key = entry.title_key
             if key == target_key:
                 score = 1.0
-            elif key in target_key or target_key in key:
-                score = 0.92
             else:
-                score = SequenceMatcher(None, target_key, key).ratio()
+                substring_score = _substring_score(target_key, key)
+                score = (
+                    substring_score
+                    if substring_score is not None
+                    else SequenceMatcher(None, target_key, key).ratio()
+                )
             if score >= min_similarity:
                 scored.append((score, entry))
 
