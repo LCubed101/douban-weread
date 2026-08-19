@@ -16,10 +16,11 @@ The following setup was validated successfully on macOS:
 - virtual environment created with `python3 -m venv .venv`
 - modern pip after `python3 -m pip install --upgrade pip`
 - editable install with `python3 -m pip install -e .`
-- 29/29 unit tests passing
+- 31/31 unit tests passing after resolver identity regressions were added
 - live title search for `百年孤独` returning 10 Douban editions
 - live ISBN search for `9787544253994` resolving to Douban subject `6082808`
 - installed console command `douban-weread` working after editable install
+- live resolver ranking validated against all 10 candidates
 
 Useful verification commands:
 
@@ -405,6 +406,23 @@ Contributor-facing instructions should clearly distinguish:
 - **Example data / model state:** non-executable text or tables
 
 This is especially important for contributors who are following terminal instructions step by step.
+
+---
+
+## PIT-010 — Resolver score vs Edition identity
+
+A live resolver run exposed that later 范晔 editions with different ISBNs and publication years were initially labeled `likely_same_edition` because their aggregate metadata score was high.
+
+This has been fixed and live-verified. See:
+
+- [PIT-010 — High match score does not mean same Edition](pitfalls/PIT-010-resolver-edition-identity.md)
+- [Live Validation Log](LIVE_VALIDATION.md)
+
+Key rule:
+
+> Similarity answers how close two records are; explicit identity evidence answers whether they are the same Edition.
+
+Known ISBN / publisher / publication-year differences now identify an `ALTERNATIVE_EDITION`. Translator / language / revision-content differences additionally require confirmation.
 
 ---
 
