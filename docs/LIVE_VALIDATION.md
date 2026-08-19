@@ -11,6 +11,7 @@ This document records successful end-to-end validation runs against live provide
 - virtual environment: `.venv`
 - pip upgraded from 21.2.3 to 26.2.1
 - editable install: successful
+- installed console command: successful
 
 ### Unit tests
 
@@ -60,7 +61,7 @@ The following live CLI results were manually cross-checked against current Douba
 
 This validates not just HTTP reachability but the current HTML parsing path for the metadata fields that matter to edition identity.
 
-### Exact ISBN search
+### Exact ISBN search via module
 
 Command:
 
@@ -99,6 +100,16 @@ Successfully built douban-weread
 Successfully installed douban-weread-0.1.0
 ```
 
+### Installed console command
+
+After editable installation, the package entry point was validated directly:
+
+```bash
+douban-weread search --isbn 9787544253994
+```
+
+It returned the same exact edition (subject `6082808`, 范晔, 南海出版公司, 2011-06, ISBN `9787544253994`). This closes the packaging/entry-point validation in addition to the `python3 -m ...` execution path.
+
 ### Validation status
 
 **Passed:**
@@ -112,6 +123,7 @@ Douban public search
 → CLI multi-edition display
 → exact ISBN verification
 → editable package install
+→ installed console entry point
 ```
 
 Not yet validated in this run:
