@@ -30,6 +30,7 @@ class FakeClient:
         self.title_results: list[Edition] = []
         self.isbn_result: Edition | None = None
         self.subject_result: Edition | None = None
+        self.subject_results: dict[str, Edition] = {}
         self.raise_error: Exception | None = None
         self.last_title: tuple[str, int] | None = None
         self.last_isbn: str | None = None
@@ -51,6 +52,8 @@ class FakeClient:
         if self.raise_error:
             raise self.raise_error
         self.last_subject = subject_id
+        if subject_id in self.subject_results:
+            return self.subject_results[subject_id]
         return self.subject_result
 
 
@@ -80,6 +83,30 @@ class FakeInterestClient:
         if self.mark_error:
             raise self.mark_error
         return SimpleNamespace(subject_id=subject_id, verified=True)
+
+
+class FakeHistoryIndex:
+    def __init__(self, *, complete: bool = True, candidates: list[SimpleNamespace] | None = None) -> None:
+        self.complete = complete
+        self.candidates = candidates or []
+        self.last_lookup: tuple[str, int] | None = None
+        self.last_set_state: tuple[str, str, str] | None = None
+
+    def status(self):
+        return SimpleNamespace(complete=self.complete)
+
+    def find_title_candidates(
+        self,
+        title: str,
+        *,
+        limit: int = 30,
+        min_similarity: float = 0.72,
+    ):
+        self.last_lookup = (title, limit)
+        return self.candidates[:limit]
+
+    def set_state(self, subject_id: str, title: str, state: str) -> None:
+        self.last_set_state = (subject_id, title, state)
 
 
 def sample_edition(**overrides: object) -> Edition:
@@ -319,12 +346,14 @@ class CliTests(unittest.TestCase):
         search.title_results = [target, older]
         interest = FakeInterestClient()
         interest.statuses = {"6082808": None, "2008724": "collect"}
+        history = FakeHistoryIndex()
         stdout = io.StringIO()
 
         code = run(
             ["inspect", "--subject", "6082808"],
             client_factory=lambda: search,
             interest_client_factory=lambda: interest,
+            history_index_factory=lambda: history,
             stdout=stdout,
             stderr=io.StringIO(),
         )
@@ -334,6 +363,27 @@ class CliTests(unittest.TestCase):
         self.assertIn("READ | subject 2008724", stdout.getvalue())
         self.assertIn("Safe to write Want-to-Read: False", stdout.getvalue())
         self.assertIsNone(interest.last_mark)
+        self.assertEqual(history.last_lookup, ("百年孤独", 30))
+
+    def test_inspect_requires_complete_history_baseline(self) -> None:
+        search = FakeClient()
+        search.subject_result = sample_edition()
+        interest = FakeInterestClient()
+        history = FakeHistoryIndex(complete=False)
+        stderr = io.StringIO()
+
+        code = run(
+            ["inspect", "--subject", "6082808"],
+            client_factory=lambda: search,
+            interest_client_factory=lambda: interest,
+            history_index_factory=lambda: history,
+            stdout=io.StringIO(),
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, EXIT_RECONCILIATION_REQUIRED)
+        self.assertIn("history sync --full", stderr.getvalue())
+        self.assertIsNone(interest.last_status_subject)
 
     def test_wish_without_confirm_returns_before_reconciliation(self) -> None:
         interest = FakeInterestClient()
@@ -359,12 +409,14 @@ class CliTests(unittest.TestCase):
         search.title_results = [target, older]
         interest = FakeInterestClient()
         interest.statuses = {"6082808": None, "2008724": "collect"}
+        history = FakeHistoryIndex()
         stderr = io.StringIO()
 
         code = run(
             ["wish", "--subject", "6082808", "--confirm"],
             client_factory=lambda: search,
             interest_client_factory=lambda: interest,
+            history_index_factory=lambda: history,
             stdout=io.StringIO(),
             stderr=stderr,
         )
@@ -381,12 +433,14 @@ class CliTests(unittest.TestCase):
         search.title_results = [target]
         interest = FakeInterestClient()
         interest.statuses = {"6082808": "wish"}
+        history = FakeHistoryIndex()
         stdout = io.StringIO()
 
         code = run(
             ["wish", "--subject", "6082808", "--confirm"],
             client_factory=lambda: search,
             interest_client_factory=lambda: interest,
+            history_index_factory=lambda: history,
             stdout=stdout,
             stderr=io.StringIO(),
         )
@@ -402,18 +456,21 @@ class CliTests(unittest.TestCase):
         search.title_results = [target]
         interest = FakeInterestClient()
         interest.statuses = {"6082808": None}
+        history = FakeHistoryIndex()
         stdout = io.StringIO()
 
         code = run(
             ["wish", "--subject", "6082808", "--confirm"],
             client_factory=lambda: search,
             interest_client_factory=lambda: interest,
+            history_index_factory=lambda: history,
             stdout=stdout,
             stderr=io.StringIO(),
         )
 
         self.assertEqual(code, EXIT_OK)
         self.assertEqual(interest.last_mark, ("6082808", True))
+        self.assertEqual(history.last_set_state, ("6082808", "百年孤独", "wish"))
         self.assertIn("saved state was verified", stdout.getvalue())
 
     def test_wish_verification_failure_has_distinct_exit_code_after_safe_reconciliation(self) -> None:
@@ -424,17 +481,20 @@ class CliTests(unittest.TestCase):
         interest = FakeInterestClient()
         interest.statuses = {"6082808": None}
         interest.mark_error = DoubanWriteVerificationError("expected wish, got do")
+        history = FakeHistoryIndex()
         stderr = io.StringIO()
 
         code = run(
             ["wish", "--subject", "6082808", "--confirm"],
             client_factory=lambda: search,
             interest_client_factory=lambda: interest,
+            history_index_factory=lambda: history,
             stdout=io.StringIO(),
             stderr=stderr,
         )
 
         self.assertEqual(code, EXIT_WRITE_VERIFICATION_ERROR)
+        self.assertIsNone(history.last_set_state)
         self.assertIn("verification error", stderr.getvalue())
 
 
