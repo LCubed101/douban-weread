@@ -1,5 +1,11 @@
 # PIT-010 — High match score does not mean same Edition
 
+## Status
+
+**Fixed and live-verified on 2026-08-19.**
+
+Post-fix validation passed 31/31 unit tests and a live 10-candidate `百年孤独` resolver run.
+
 ## Symptom
 
 Live resolver validation used Douban subject `6082808` as the Source Edition:
@@ -76,27 +82,64 @@ Regression tests were added for:
 - different publication year with same translator/publisher
 - exact ISBN remaining exact and safe
 
-## Live-validation expectation after the fix
+## Live verification after the fix
 
-Using `6082808` as Source Edition:
+Using `6082808` as Source Edition, the observed output was:
 
 ```text
 6082808 (2011 / 范晔)
 → exact_edition
+→ edition differences: none
+→ material differences: none
+→ confirmation required = False
 → safe_to_auto_apply = True
 
 27107109 (2017 / 范晔)
 35060745 (2020 / 范晔)
 37144359 (2025 / 范晔)
 → alternative_edition
+→ edition differences: ISBN differs, publication year differs
+→ material differences: none
 → confirmation required = False
-→ edition_differences includes ISBN/year differences
+→ safe_to_auto_apply = False
+```
 
-1786670 / 1059112 / 1762096 / 1937228 / 2008724 / 1794403
+Translator-different records were also correct after the fix. Examples:
+
+```text
+1786670 / 1059112 / 1762096
 → alternative_edition
-→ translator differs where applicable
+→ edition differences: ISBN, publisher, publication year
+→ material differences: translator differs
+→ confirmation required = True
+
+1937228 / 1794403
+→ alternative_edition
+→ ISBN missing, so no false ISBN-difference claim
+→ publisher/year differences detected
+→ translator differs
 → confirmation required = True
 ```
+
+The full post-fix suite result was:
+
+```text
+Ran 31 tests in 0.004s
+OK
+```
+
+## Prevention
+
+Do not determine Edition identity from aggregate score thresholds alone.
+
+Regression tests must preserve these invariants:
+
+- exact normalized ISBN → `EXACT_EDITION`
+- two known different ISBNs → never `LIKELY_SAME_EDITION`
+- known publisher/year differences → `ALTERNATIVE_EDITION`
+- missing ISBN → unknown, not automatically different
+- translator/language/revision-content differences → confirmation required
+- only exact ISBN is currently `safe_to_auto_apply=True`
 
 ## General lesson
 
