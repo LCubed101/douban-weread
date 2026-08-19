@@ -13,6 +13,7 @@ from douban_weread.cli import (
     EXIT_PROVIDER_ERROR,
     EXIT_WRITE_VERIFICATION_ERROR,
     _default_interest_client,
+    _diagnose_cookie_input,
     format_edition,
     run,
 )
@@ -187,6 +188,34 @@ class CliTests(unittest.TestCase):
         self.assertEqual(client.cookies.get("dbcl2"), "test-user:test-session")
         self.assertEqual(client.ck, "test-csrf")
         self.assertFalse(client.cookie_header.lower().startswith("cookie:"))
+
+    def test_cookie_diagnose_reports_only_structure(self) -> None:
+        raw = 'bid=test-bid; dbcl2="test-user:test-session"; ck=test-csrf'
+        with patch.dict(os.environ, {"DOUBAN_COOKIE": raw}, clear=False):
+            stdout = io.StringIO()
+            code = run(["auth", "diagnose"], stdout=stdout, stderr=io.StringIO())
+
+        output = stdout.getvalue()
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("Cookie input kind: cookie_header", output)
+        self.assertIn("Has dbcl2: True", output)
+        self.assertIn("Has ck: True", output)
+        self.assertIn("Ready for auth check: True", output)
+        self.assertNotIn("test-session", output)
+        self.assertNotIn("test-csrf", output)
+
+    def test_cookie_diagnose_classifies_json_export_without_values(self) -> None:
+        raw = '[{"name":"dbcl2","value":"test-secret"}]'
+        with patch.dict(os.environ, {"DOUBAN_COOKIE": raw}, clear=False):
+            kind, names = _diagnose_cookie_input()
+            stdout = io.StringIO()
+            code = run(["auth", "diagnose"], stdout=stdout, stderr=io.StringIO())
+
+        self.assertEqual(kind, "json_or_cookie_export")
+        self.assertEqual(names, [])
+        self.assertEqual(code, EXIT_PROVIDER_ERROR)
+        self.assertIn("Cookie input kind: json_or_cookie_export", stdout.getvalue())
+        self.assertNotIn("test-secret", stdout.getvalue())
 
     def test_auth_check_prints_success_without_cookie_value(self) -> None:
         interest = FakeInterestClient()
