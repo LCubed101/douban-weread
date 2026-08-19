@@ -38,10 +38,16 @@ CURRENT_SUBJECT_ITEM_PAGE = """
 <ul class="interest-list">
   <li class="subject-item">
     <div class="pic"><a href="https://book.douban.com/subject/25837854/"><img src="x"></a></div>
-    <div class="info"><h2><a href="https://book.douban.com/subject/25837854/" title="荷马史诗·奥德赛">荷马史诗·奥德赛</a></h2></div>
+    <div class="info">
+      <h2><a href="https://book.douban.com/subject/25837854/" title="荷马史诗·奥德赛">荷马史诗·奥德赛</a></h2>
+      <div class="ft"><a href="https://book.douban.com/subject/25837854/">纸质版 46.60元</a></div>
+    </div>
   </li>
   <li class="subject-item">
-    <div class="info"><h2><a href="https://book.douban.com/subject/6082808/" title="百年孤独">百年孤独</a></h2></div>
+    <div class="info">
+      <h2><a href="https://book.douban.com/subject/6082808/" title="百年孤独">百年孤独</a></h2>
+      <div class="ft"><a href="https://book.douban.com/subject/6082808/">纸质版 39.90元</a></div>
+    </div>
   </li>
 </ul>
 </body>
@@ -93,6 +99,19 @@ class DoubanBookHistoryClientTests(unittest.TestCase):
             [(entry.subject_id, entry.title) for entry in entries],
             [("25837854", "荷马史诗·奥德赛"), ("6082808", "百年孤独")],
         )
+
+    def test_price_link_to_same_subject_cannot_overwrite_title(self) -> None:
+        def transport(url: str, headers: dict[str, str]) -> _HistoryResponse:
+            return _HistoryResponse(200, CURRENT_SUBJECT_ITEM_PAGE, url)
+
+        client = DoubanBookHistoryClient(
+            'dbcl2="123456:test-session"; ck=test-csrf',
+            transport=transport,
+        )
+        entries = client.fetch_state("wish")
+
+        self.assertEqual([entry.title for entry in entries], ["荷马史诗·奥德赛", "百年孤独"])
+        self.assertFalse(any("纸质版" in entry.title for entry in entries))
 
     def test_declared_nonempty_list_with_zero_parsed_entries_fails_closed(self) -> None:
         body = "<html><head><title>测试用户想读的书(12)</title></head><body></body></html>"
