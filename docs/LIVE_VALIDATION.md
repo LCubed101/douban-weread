@@ -341,4 +341,46 @@ Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
 
 This validates the migration/safety boundary: a baseline produced by the pre-fix parser is no longer trusted as complete after the parser schema version changes. No manual database deletion was required.
 
-The corrected `li.subject-item` live history parsing path still requires a second authenticated full-sync run before history ingestion itself is considered live-validated.
+## 2026-08-19 — Live Douban reading-history baseline sync
+
+After PIT-020 was fixed, the corrected history parser was run against the authenticated user's real Douban Book lists.
+
+Authentication diagnostics succeeded without exposing credential values:
+
+```text
+Cookie input kind: cookie_header
+Parsed cookie count: 15
+Has dbcl2: True
+Has ck: True
+Ready for auth check: True
+```
+
+The authenticated read-only probe also succeeded:
+
+```text
+Douban auth OK (user 182590900): Douban Cookie was accepted by the Book interest endpoint.
+```
+
+Command:
+
+```bash
+douban-weread history sync --full
+```
+
+Observed result:
+
+```text
+Douban history baseline synced successfully.
+History baseline: complete
+Total: 1747
+Want-to-Read: 1511
+Reading: 40
+Read: 196
+Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
+```
+
+This live-validates the corrected `li.subject-item` history ingestion path, pagination across the user's lists, state mapping for `wish` / `do` / `collect`, full-snapshot replacement, and the local SQLite persistence layer.
+
+The full-history baseline is now available for local-first candidate discovery. The next integration step is to use this baseline to shortlist historical subject IDs, resolve full Edition metadata only for those candidates, and feed the verified same-Work records into reconciliation before any state-changing `wish` action.
+
+No real state-changing Douban write was performed during this validation.
