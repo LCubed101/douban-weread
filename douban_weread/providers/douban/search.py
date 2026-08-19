@@ -13,7 +13,14 @@ from douban_weread.providers.douban.normalize import normalize_douban_edition, n
 
 
 DEFAULT_BASE_URL = "https://api.douban.com/v2/book"
-DEFAULT_USER_AGENT = "douban-weread/0.1 (+https://github.com/LCubed101/douban-weread)"
+# Douban may reject obvious library/bot user agents with HTTP 418 even when the
+# same endpoint is reachable from the browser. Keep this browser-like default
+# configurable so deployments can override it without changing provider logic.
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/151.0.0.0 Safari/537.36"
+)
 
 
 class DoubanProviderError(RuntimeError):
