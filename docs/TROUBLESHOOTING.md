@@ -19,6 +19,7 @@ The following setup was validated successfully on macOS:
 - 29/29 unit tests passing
 - live title search for `百年孤独` returning 10 Douban editions
 - live ISBN search for `9787544253994` resolving to Douban subject `6082808`
+- installed console command `douban-weread` working after editable install
 
 Useful verification commands:
 
@@ -26,6 +27,7 @@ Useful verification commands:
 python3 -m unittest discover -s tests -v
 python3 -m douban_weread search "百年孤独"
 python3 -m douban_weread search --isbn 9787544253994
+douban-weread search --isbn 9787544253994
 ```
 
 ---
@@ -353,6 +355,59 @@ A failing live test should not immediately trigger changes to the resolver or da
 
 ---
 
+## PIT-009 — Shell output and example data are not terminal commands
+
+### Symptom
+
+After a successful install, copying the success message back into zsh produced:
+
+```text
+zsh: command not found: Successfully
+```
+
+Likewise, copying an illustrative block such as:
+
+```text
+Source Edition:
+2011 / 范晔 / 南海出版公司
+ISBN 9787544253994
+```
+
+into the terminal produced `command not found` errors for `Source`, `2011`, and `ISBN`.
+
+### Cause
+
+The shell executes every pasted line as a command. Human-readable output, labels, expected results, and conceptual examples are not executable unless they are explicitly wrapped in a real shell/Python command.
+
+### Resolution
+
+Only paste commands from fenced blocks explicitly marked as executable (`bash`, `sh`, or a complete `python3 - <<'PY' ... PY` block).
+
+For example, this is a command:
+
+```bash
+douban-weread search --isbn 9787544253994
+```
+
+This is output/data and should **not** be pasted as a command:
+
+```text
+Successfully installed douban-weread-0.1.0
+Source Edition: 2011 / 范晔 / 南海出版公司
+```
+
+### Documentation rule
+
+Contributor-facing instructions should clearly distinguish:
+
+- **Run:** executable command blocks
+- **Expected output:** non-executable text blocks
+- **Example data / model state:** non-executable text or tables
+
+This is especially important for contributors who are following terminal instructions step by step.
+
+---
+
 ## Current live-validation sample: `百年孤独`
 
 On 2026-08-19 the CLI returned 10 candidate editions spanning:
@@ -369,6 +424,7 @@ Recommended recurring smoke tests:
 ```bash
 python3 -m douban_weread search "百年孤独"
 python3 -m douban_weread search --isbn 9787544253994
+douban-weread search --isbn 9787544253994
 ```
 
 Do not assert that the ordering or total candidate count will remain permanently stable; Douban search results can change.
