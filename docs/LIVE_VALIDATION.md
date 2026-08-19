@@ -21,10 +21,17 @@ Command:
 python3 -m unittest discover -s tests -v
 ```
 
-Result:
+Initial provider/CLI result:
 
 ```text
 Ran 29 tests in 0.003s
+OK
+```
+
+After the live resolver validation exposed PIT-010 and the resolver regression tests were added:
+
+```text
+Ran 31 tests in 0.004s
 OK
 ```
 
@@ -110,6 +117,54 @@ douban-weread search --isbn 9787544253994
 
 It returned the same exact edition (subject `6082808`, 范晔, 南海出版公司, 2011-06, ISBN `9787544253994`). This closes the packaging/entry-point validation in addition to the `python3 -m ...` execution path.
 
+## 2026-08-19 — Live Edition Resolver validation
+
+### Source Edition
+
+The live resolver run used the exact ISBN result as the Source Edition:
+
+```text
+subject: 6082808
+Title: 百年孤独
+Translator: 范晔
+Publisher: 南海出版公司
+Published: 2011-06
+ISBN: 9787544253994
+```
+
+### Expected and observed resolver behavior after PIT-010 fix
+
+The corrected resolver was run against all 10 live candidates.
+
+| Subject | Edition outcome | Confirmation | Key differences |
+| --- | --- | --- | --- |
+| 6082808 | `exact_edition` | no | none; exact ISBN |
+| 27107109 | `alternative_edition` | no | ISBN, publication year |
+| 37144359 | `alternative_edition` | no | ISBN, publication year |
+| 35060745 | `alternative_edition` | no | ISBN, publication year |
+| 2008724 | `alternative_edition` | yes | ISBN, year; translator differs |
+| 1786670 | `alternative_edition` | yes | ISBN, publisher, year; translator differs |
+| 1059112 | `alternative_edition` | yes | ISBN, publisher, year; translator differs |
+| 1762096 | `alternative_edition` | yes | ISBN, publisher, year; translator differs |
+| 1937228 | `alternative_edition` | yes | publisher, year; translator differs; ISBN missing |
+| 1794403 | `alternative_edition` | yes | publisher, year; translator differs; ISBN missing |
+
+Only subject `6082808` was `safe_to_auto_apply=True`. All non-exact editions remained unsafe for silent state-changing actions.
+
+This validates the intended distinction between:
+
+```text
+same Work
+≠
+same Edition
+≠
+materially equivalent reading experience
+```
+
+In particular, later 范晔 / 南海出版公司 records are now correctly treated as alternative editions despite high metadata similarity, because their known ISBNs and publication years differ.
+
+Translator-different editions are correctly surfaced as material differences and require confirmation.
+
 ### Validation status
 
 **Passed:**
@@ -124,11 +179,13 @@ Douban public search
 → exact ISBN verification
 → editable package install
 → installed console entry point
+→ live resolver ranking
+→ exact-vs-alternative Edition identity
+→ material translator-difference confirmation policy
 ```
 
 Not yet validated in this run:
 
-- resolver ranking against a user-selected source edition in a live multi-edition case
 - Douban authenticated write actions (`wish`)
 - WeRead discovery and edition alignment
 
