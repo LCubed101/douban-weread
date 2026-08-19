@@ -7,6 +7,7 @@ The projects below have informed the early research and architecture of `douban-
 ## Douban ecosystem
 
 - **DouBanSync** — referenced for its approach to authenticated Douban operations using browser cookies, `ck` / `dbcl2`, and internal interest endpoints.
+- **tofu (doufen-org/tofu)** — referenced as an implementation/protocol reference for cross-media Douban interest states, including the Book interest endpoint and the `wish` / `do` / `collect` state names.
 - **douban-mcp** — referenced for Douban book search, ISBN lookup, and exploration of Douban/Frodo API access patterns.
 - **doumark-action** — referenced for ideas around synchronizing Douban mark states and scheduled jobs.
 

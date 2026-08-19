@@ -1,11 +1,28 @@
 from __future__ import annotations
 
 import io
+import os
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from douban_weread.cli import EXIT_NO_RESULTS, EXIT_OK, EXIT_PROVIDER_ERROR, format_edition, run
+from douban_weread.cli import (
+    EXIT_CONFIRMATION_REQUIRED,
+    EXIT_NO_RESULTS,
+    EXIT_OK,
+    EXIT_PROVIDER_ERROR,
+    EXIT_WRITE_VERIFICATION_ERROR,
+    _default_interest_client,
+    _diagnose_cookie_input,
+    format_edition,
+    run,
+)
 from douban_weread.core.models import Edition
-from douban_weread.providers.douban import DoubanProviderError
+from douban_weread.providers.douban import (
+    DoubanConfirmationRequired,
+    DoubanProviderError,
+    DoubanWriteVerificationError,
+)
 
 
 class FakeClient:
@@ -27,6 +44,33 @@ class FakeClient:
             raise self.raise_error
         self.last_isbn = isbn
         return self.isbn_result
+
+
+class FakeInterestClient:
+    def __init__(self) -> None:
+        self.auth_status = SimpleNamespace(ok=True, reason="ok", message="Cookie accepted.", user_id="123456")
+        self.current_status: str | None = None
+        self.mark_result = SimpleNamespace(subject_id="6082808", verified=True)
+        self.raise_error: Exception | None = None
+        self.last_probe: str | None = None
+        self.last_status_subject: str | None = None
+        self.last_mark: tuple[str, bool] | None = None
+
+    def check_auth(self, *, probe_subject_id: str = "6082808"):
+        self.last_probe = probe_subject_id
+        return self.auth_status
+
+    def get_interest_status(self, subject_id: str) -> str | None:
+        self.last_status_subject = subject_id
+        if self.raise_error:
+            raise self.raise_error
+        return self.current_status
+
+    def mark_wish(self, subject_id: str, *, confirmed: bool = False):
+        self.last_mark = (subject_id, confirmed)
+        if self.raise_error:
+            raise self.raise_error
+        return self.mark_result
 
 
 def sample_edition(**overrides: object) -> Edition:
@@ -142,6 +186,159 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(code, EXIT_NO_RESULTS)
         self.assertEqual(client.last_title, ("百年孤独", 100))
+
+    def test_default_interest_client_accepts_cookie_header_prefix(self) -> None:
+        raw = 'Cookie: bid=test-bid; dbcl2="test-user:test-session"; ck=test-csrf'
+        with patch.dict(os.environ, {"DOUBAN_COOKIE": raw}, clear=False):
+            client = _default_interest_client()
+
+        self.assertEqual(client.cookies.get("bid"), "test-bid")
+        self.assertEqual(client.cookies.get("dbcl2"), "test-user:test-session")
+        self.assertEqual(client.ck, "test-csrf")
+        self.assertFalse(client.cookie_header.lower().startswith("cookie:"))
+
+    def test_cookie_diagnose_reports_only_structure(self) -> None:
+        raw = 'bid=test-bid; dbcl2="test-user:test-session"; ck=test-csrf'
+        with patch.dict(os.environ, {"DOUBAN_COOKIE": raw}, clear=False):
+            stdout = io.StringIO()
+            code = run(["auth", "diagnose"], stdout=stdout, stderr=io.StringIO())
+
+        output = stdout.getvalue()
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("Cookie input kind: cookie_header", output)
+        self.assertIn("Has dbcl2: True", output)
+        self.assertIn("Has ck: True", output)
+        self.assertIn("Ready for auth check: True", output)
+        self.assertNotIn("test-session", output)
+        self.assertNotIn("test-csrf", output)
+
+    def test_cookie_diagnose_classifies_json_export_without_values(self) -> None:
+        raw = '[{"name":"dbcl2","value":"test-secret"}]'
+        with patch.dict(os.environ, {"DOUBAN_COOKIE": raw}, clear=False):
+            kind, names = _diagnose_cookie_input()
+            stdout = io.StringIO()
+            code = run(["auth", "diagnose"], stdout=stdout, stderr=io.StringIO())
+
+        self.assertEqual(kind, "json_or_cookie_export")
+        self.assertEqual(names, [])
+        self.assertEqual(code, EXIT_PROVIDER_ERROR)
+        self.assertIn("Cookie input kind: json_or_cookie_export", stdout.getvalue())
+        self.assertNotIn("test-secret", stdout.getvalue())
+
+    def test_auth_check_prints_success_without_cookie_value(self) -> None:
+        interest = FakeInterestClient()
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        code = run(
+            ["auth", "check", "--probe-subject", "6082808"],
+            interest_client_factory=lambda: interest,
+            stdout=stdout,
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(interest.last_probe, "6082808")
+        self.assertIn("Douban auth OK", stdout.getvalue())
+        self.assertIn("user 123456", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_auth_check_failure_is_actionable(self) -> None:
+        interest = FakeInterestClient()
+        interest.auth_status = SimpleNamespace(
+            ok=False,
+            reason="missing_ck",
+            message="DOUBAN_COOKIE does not contain ck.",
+            user_id=None,
+        )
+        stderr = io.StringIO()
+
+        code = run(
+            ["auth", "check"],
+            interest_client_factory=lambda: interest,
+            stdout=io.StringIO(),
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, EXIT_PROVIDER_ERROR)
+        self.assertIn("missing_ck", stderr.getvalue())
+
+    def test_status_reads_current_interest_without_mutation(self) -> None:
+        interest = FakeInterestClient()
+        interest.current_status = "collect"
+        stdout = io.StringIO()
+
+        code = run(
+            ["status", "--subject", "25837854"],
+            interest_client_factory=lambda: interest,
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(interest.last_status_subject, "25837854")
+        self.assertIn("interest: collect", stdout.getvalue())
+        self.assertIsNone(interest.last_mark)
+
+    def test_status_prints_none_for_unmarked_subject(self) -> None:
+        interest = FakeInterestClient()
+        stdout = io.StringIO()
+
+        code = run(
+            ["status", "--subject", "25837854"],
+            interest_client_factory=lambda: interest,
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("interest: none", stdout.getvalue())
+
+    def test_wish_without_confirm_returns_confirmation_exit_code(self) -> None:
+        interest = FakeInterestClient()
+        interest.raise_error = DoubanConfirmationRequired("explicit confirmation required")
+        stderr = io.StringIO()
+
+        code = run(
+            ["wish", "--subject", "6082808"],
+            interest_client_factory=lambda: interest,
+            stdout=io.StringIO(),
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, EXIT_CONFIRMATION_REQUIRED)
+        self.assertEqual(interest.last_mark, ("6082808", False))
+        self.assertIn("Confirmation required", stderr.getvalue())
+
+    def test_confirmed_wish_prints_verified_success(self) -> None:
+        interest = FakeInterestClient()
+        stdout = io.StringIO()
+
+        code = run(
+            ["wish", "--subject", "6082808", "--confirm"],
+            interest_client_factory=lambda: interest,
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(interest.last_mark, ("6082808", True))
+        self.assertIn("saved state was verified", stdout.getvalue())
+
+    def test_wish_verification_failure_has_distinct_exit_code(self) -> None:
+        interest = FakeInterestClient()
+        interest.raise_error = DoubanWriteVerificationError("expected wish, got do")
+        stderr = io.StringIO()
+
+        code = run(
+            ["wish", "--subject", "6082808", "--confirm"],
+            interest_client_factory=lambda: interest,
+            stdout=io.StringIO(),
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, EXIT_WRITE_VERIFICATION_ERROR)
+        self.assertIn("verification error", stderr.getvalue())
 
 
 if __name__ == "__main__":
