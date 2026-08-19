@@ -16,6 +16,8 @@ from .search import DEFAULT_USER_AGENT, DoubanProviderError
 DEFAULT_BASE_URL = "https://book.douban.com"
 _HISTORY_STATES = {"wish", "do", "collect"}
 _SUBJECT_HREF_RE = re.compile(r"/subject/(?P<id>\d+)/?", re.IGNORECASE)
+_TOTAL_RE = re.compile(r"[\(（]\s*(?P<count>\d+)\s*[\)）]")
+_RANGE_TOTAL_RE = re.compile(r"\b\d+\s*-\s*\d+\s*/\s*(?P<count>\d+)\b")
 _LOGIN_MARKERS = ("accounts.douban.com", "/login", "/signup")
 _BLOCK_MARKERS = ("captcha", "sec.douban.com", "验证码")
 
@@ -40,16 +42,22 @@ HistoryTransport = Callable[[str, Mapping[str, str]], _HistoryResponse]
 class _HistoryPageParser(HTMLParser):
     """Parse subject IDs/titles from one Douban user book-list page.
 
-    The parser deliberately extracts only lightweight list metadata. Full
-    Edition metadata is resolved lazily later, only for locally shortlisted
-    candidates, so a full history sync does not trigger one subject-page
-    request per book.
+    Current Douban Book list pages use ``li.subject-item``. A ``div.item``
+    fallback is kept for older/alternate markup, but title similarity is never
+    used here to infer Work identity.
+
+    The parser also captures the list's declared total when available. That
+    lets the caller fail closed if Douban says a list is non-empty but a future
+    HTML change causes the entry parser to return zero or only a partial list.
     """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.entries: list[tuple[str, str]] = []
         self.next_start: int | None = None
+        self.declared_total: int | None = None
+
+        self._item_tag: str | None = None
         self._item_depth = 0
         self._next_depth = 0
         self._active_subject: str | None = None
@@ -57,15 +65,26 @@ class _HistoryPageParser(HTMLParser):
         self._titles: dict[str, str] = {}
         self._order: list[str] = []
 
+        self._in_title = False
+        self._title_text: list[str] = []
+        self._page_text: list[str] = []
+
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_map = dict(attrs)
         classes = set((attrs_map.get("class") or "").split())
 
-        if tag == "div":
-            if self._item_depth:
+        if tag == "title":
+            self._in_title = True
+
+        if self._item_tag is not None:
+            if tag == self._item_tag:
                 self._item_depth += 1
-            elif "item" in classes:
-                self._item_depth = 1
+        elif tag == "li" and "subject-item" in classes:
+            self._item_tag = "li"
+            self._item_depth = 1
+        elif tag == "div" and "item" in classes:
+            self._item_tag = "div"
+            self._item_depth = 1
 
         if tag == "span":
             if self._next_depth:
@@ -77,13 +96,15 @@ class _HistoryPageParser(HTMLParser):
             return
 
         href = attrs_map.get("href") or ""
-        if self._next_depth:
+        rel_tokens = set((attrs_map.get("rel") or "").split())
+        is_next_link = self._next_depth > 0 or "next" in classes or "next" in rel_tokens
+        if is_next_link:
             query = parse_qs(urlparse(href).query)
             start_values = query.get("start", [])
             if start_values and start_values[0].isdigit():
                 self.next_start = int(start_values[0])
 
-        if not self._item_depth:
+        if self._item_tag is None:
             return
 
         match = _SUBJECT_HREF_RE.search(href)
@@ -102,6 +123,9 @@ class _HistoryPageParser(HTMLParser):
         self._active_text = []
 
     def handle_data(self, data: str) -> None:
+        self._page_text.append(data)
+        if self._in_title:
+            self._title_text.append(data)
         if self._active_subject:
             self._active_text.append(data)
 
@@ -113,8 +137,15 @@ class _HistoryPageParser(HTMLParser):
             self._active_subject = None
             self._active_text = []
 
-        if tag == "div" and self._item_depth:
+        if tag == "title":
+            self._in_title = False
+
+        if self._item_tag == tag:
             self._item_depth -= 1
+            if self._item_depth <= 0:
+                self._item_tag = None
+                self._item_depth = 0
+
         if tag == "span" and self._next_depth:
             self._next_depth -= 1
 
@@ -125,6 +156,17 @@ class _HistoryPageParser(HTMLParser):
             for subject_id in self._order
             if self._titles.get(subject_id, "").strip()
         ]
+
+        title_text = " ".join("".join(self._title_text).split())
+        total_match = _TOTAL_RE.search(title_text)
+        if total_match:
+            self.declared_total = int(total_match.group("count"))
+            return
+
+        page_text = " ".join(" ".join(self._page_text).split())
+        range_match = _RANGE_TOTAL_RE.search(page_text)
+        if range_match:
+            self.declared_total = int(range_match.group("count"))
 
 
 def _user_id_from_cookie(cookie_header: str) -> str | None:
@@ -185,9 +227,19 @@ class DoubanBookHistoryClient:
         result: list[HistoryEntry] = []
         seen: set[str] = set()
         start = 0
+        declared_total: int | None = None
 
         for _ in range(self.max_pages):
             page = self._fetch_page(state, start=start)
+
+            if page.declared_total is not None:
+                if declared_total is None:
+                    declared_total = page.declared_total
+                elif page.declared_total != declared_total:
+                    raise DoubanProviderError(
+                        "Douban history declared-total changed during pagination; aborting safely."
+                    )
+
             for subject_id, title in page.entries:
                 if subject_id in seen:
                     continue
@@ -195,6 +247,11 @@ class DoubanBookHistoryClient:
                 result.append(HistoryEntry(subject_id=subject_id, title=title, state=state))
 
             if page.next_start is None:
+                self._verify_complete_state(
+                    state,
+                    parsed_count=len(result),
+                    declared_total=declared_total,
+                )
                 return result
             if page.next_start <= start:
                 raise DoubanProviderError("Douban history pagination did not advance; aborting safely.")
@@ -203,6 +260,28 @@ class DoubanBookHistoryClient:
         raise DoubanProviderError(
             f"Douban history sync exceeded the safety limit of {self.max_pages} pages for state {state}."
         )
+
+    @staticmethod
+    def _verify_complete_state(
+        state: str,
+        *,
+        parsed_count: int,
+        declared_total: int | None,
+    ) -> None:
+        if declared_total is None:
+            if parsed_count == 0:
+                raise DoubanProviderError(
+                    f"Douban history page for {state} yielded zero entries without a verifiable total; "
+                    "refusing to record an empty baseline because the HTML structure may have changed."
+                )
+            return
+
+        if parsed_count != declared_total:
+            raise DoubanProviderError(
+                f"Douban history completeness check failed for {state}: "
+                f"page declared {declared_total} entries but parsed {parsed_count}. "
+                "The local baseline was not replaced."
+            )
 
     def _fetch_page(self, state: str, *, start: int) -> _HistoryPageParser:
         params = urlencode(
