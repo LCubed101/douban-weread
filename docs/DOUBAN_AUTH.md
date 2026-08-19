@@ -44,7 +44,7 @@ or:
 Cookie: bid=...; dbcl2=...; ck=...
 ```
 
-The CLI accepts both forms. Do not paste a full multi-line request-header dump or a complete cURL command as `DOUBAN_COOKIE`.
+The CLI accepts both forms. Do not paste a full multi-line request-header dump, a complete cURL command, or a JSON cookie export as `DOUBAN_COOKIE`.
 
 To avoid putting the Cookie directly into shell history:
 
@@ -56,9 +56,37 @@ echo
 
 The terminal intentionally does not echo the pasted secret.
 
+## Local Cookie diagnosis
+
+Before making any network request, inspect the locally configured input safely:
+
+```bash
+douban-weread auth diagnose
+```
+
+This command makes **no network request** and never prints Cookie values. It reports only:
+
+- input format classification
+- parsed cookie count
+- whether `dbcl2` is present
+- whether `ck` is present
+- whether the input is ready for `auth check`
+
+Example successful structural result:
+
+```text
+Cookie input kind: cookie_header
+Parsed cookie count: 8
+Has dbcl2: True
+Has ck: True
+Ready for auth check: True
+```
+
+Possible input classifications include `empty`, `multiline_input`, `curl_command`, `json_or_cookie_export`, `unparseable_cookie_header`, `not_cookie_header`, `empty_parse`, and `cookie_header`.
+
 ## Read-only authentication check
 
-Run this before any write test:
+Run this only after `auth diagnose` reports `Ready for auth check: True`:
 
 ```bash
 douban-weread auth check
@@ -82,8 +110,6 @@ It may report:
 - `network_or_provider`
 
 Captcha / anti-abuse pages are surfaced as errors. The project should not automate captcha bypass.
-
-If `cookie_format` occurs, first verify locally that you copied only the single Cookie request header (with or without the `Cookie:` prefix), rather than a multi-line header dump. Do not print or share the Cookie value while debugging.
 
 ## Want-to-Read action
 
@@ -132,20 +158,21 @@ Use a real account only after the unit tests pass.
 
 1. Export Cookie locally; never send it to another person or service.
 2. Run the full unit test suite.
-3. Run `douban-weread auth check` only.
-4. Inspect the exact subject in a browser.
-5. Choose a subject whose state you are comfortable changing.
-6. Run the unconfirmed `wish` command first and verify that it refuses.
-7. Only then run the same command with `--confirm`.
-8. Verify both the CLI read-back and the Douban web UI.
+3. Run `douban-weread auth diagnose`.
+4. Only if it reports `Ready for auth check: True`, run `douban-weread auth check`.
+5. Inspect the exact subject in a browser.
+6. Choose a subject whose state you are comfortable changing.
+7. Run the unconfirmed `wish` command first and verify that it refuses.
+8. Only then run the same command with `--confirm`.
+9. Verify both the CLI read-back and the Douban web UI.
 
 Record any new failure mode in `docs/TROUBLESHOOTING.md` or `docs/pitfalls/`.
 
 ## Live validation status — 2026-08-19
 
-- 51/51 tests passed on the user's macOS / Python 3.10 environment before the first auth attempt.
-- The first `douban-weread auth check` stopped at local Cookie parsing with `cookie_format`; no network-auth success was claimed and no state-changing request was made.
-- The CLI now normalizes a common one-line `Cookie: ...` prefix; this path still requires live re-validation.
+- 52/52 tests passed on the user's macOS / Python 3.10 environment before adding the dedicated diagnostic command.
+- The authenticated network probe has not yet succeeded because the current local Cookie input parsed to zero fields.
+- A previous multi-line Python diagnostic was accidentally pasted into zsh one statement at a time; the project now provides `douban-weread auth diagnose` instead (PIT-015).
 - No live `wish` write should be attempted until `douban-weread auth check` succeeds.
 
 ## Known uncertainty
