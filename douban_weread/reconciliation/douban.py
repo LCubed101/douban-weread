@@ -31,7 +31,7 @@ class DoubanWorkInspector:
         search_provider: DoubanSearchProvider,
         interest_provider: DoubanInterestProvider,
         *,
-        candidate_limit: int = 10,
+        candidate_limit: int = 20,
     ) -> None:
         self.search_provider = search_provider
         self.interest_provider = interest_provider
