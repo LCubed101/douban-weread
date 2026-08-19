@@ -192,3 +192,55 @@ Not yet validated in this run:
 ### Regression note
 
 Do not assert a permanent candidate count or search ordering. Douban search results are live data and may change. Regression tests should assert parsing and safety semantics using fixtures, while this file records observed live behavior at a point in time.
+
+## 2026-08-19 — Live Douban authentication validation
+
+The authenticated Book adapter was validated with a user-owned browser session while keeping the Cookie value local and out of logs/chat.
+
+### Local Cookie diagnostics
+
+After copying the actual `Cookie` request-header value from a logged-in `book.douban.com` request:
+
+```text
+Cookie input kind: cookie_header
+Parsed cookie count: 16
+Has dbcl2: True
+Has ck: True
+Ready for auth check: True
+```
+
+This confirms that the local parser recognized a real browser Cookie header and found the two fields required by the current authenticated Book adapter.
+
+### Read-only authenticated probe
+
+Command:
+
+```bash
+douban-weread auth check
+```
+
+Observed result:
+
+```text
+Douban auth OK (user 182590900): Douban Cookie was accepted by the Book interest endpoint.
+```
+
+This validates the current user-owned Cookie → authenticated Book interest-endpoint probe path on a real account.
+
+### Safety status
+
+**Passed:**
+
+```text
+local secret input without echo
+→ Cookie structure diagnosis
+→ dbcl2 / ck detection
+→ authenticated Book interest endpoint probe
+```
+
+**Not yet performed:**
+
+- a real state-changing `wish` request
+- post-write read-back against a real changed subject
+
+A real write remains intentionally deferred until Work-level reading-state reconciliation is live-validated, so an already-read / currently-reading / other-edition Want-to-Read record cannot be silently downgraded or duplicated.
