@@ -17,7 +17,7 @@ The first interface-independent demo can search public Douban Book web pages by 
 ```bash
 git clone https://github.com/LCubed101/douban-weread.git
 cd douban-weread
-git checkout agent/cli-search-demo
+git checkout agent/douban-wish-action
 python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install --upgrade pip
@@ -40,14 +40,38 @@ python3 -m douban_weread search --isbn 9787544253994
 
 A title search intentionally prints multiple candidate editions when available so the user can compare translator, publisher, publication date, and ISBN before any future state-changing action.
 
+## Douban authentication and Want-to-Read
+
+Authenticated actions use a user-owned browser Cookie stored only in the local environment. **Never commit the real Cookie or paste it into issues, PR comments, screenshots, or chat messages.**
+
+The current implementation expects a complete `DOUBAN_COOKIE` containing at least `dbcl2` and `ck`.
+
+First run the read-only auth check:
+
+```bash
+douban-weread auth check
+```
+
+The state-changing command is deliberately explicit:
+
+```bash
+douban-weread wish --subject <DOUBAN_SUBJECT_ID> --confirm
+```
+
+Without `--confirm`, the command refuses to change state. After a POST, the client reads the subject state back and reports success only if Douban actually saved `wish`.
+
+The authenticated Book interest route is an unofficial/internal interface and still requires live user-owned Cookie validation. See [docs/DOUBAN_AUTH.md](docs/DOUBAN_AUTH.md) before testing writes.
+
 CLI exit codes:
 
 - `0` — success
-- `1` — Douban provider/network error
+- `1` — Douban auth/provider/network error
 - `2` — invalid CLI arguments (standard `argparse` behavior)
 - `3` — no matching edition found
+- `4` — state-changing action missing explicit confirmation
+- `5` — write response returned but saved-state verification failed
 
-> The current Douban provider is read-only and uses public Douban Book web search plus subject pages. It does not depend on the legacy `api.douban.com/v2/book` endpoint. Because this is an unofficial web integration, Douban page structure or anti-bot behavior may change and should be handled conservatively.
+> Public book discovery uses Douban Book web search plus subject pages and does not depend on the legacy `api.douban.com/v2/book` endpoint. Authenticated interest changes use a separate unofficial/internal web adapter. Douban page structure, anti-abuse behavior, Cookie semantics, and internal endpoints may change, so all providers should fail conservatively.
 
 For real-world failure modes and fixes, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). For successful end-to-end smoke-test snapshots, see [docs/LIVE_VALIDATION.md](docs/LIVE_VALIDATION.md).
 
