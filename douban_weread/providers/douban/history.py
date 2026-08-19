@@ -42,13 +42,15 @@ HistoryTransport = Callable[[str, Mapping[str, str]], _HistoryResponse]
 class _HistoryPageParser(HTMLParser):
     """Parse subject IDs/titles from one Douban user book-list page.
 
-    Current Douban Book list pages use ``li.subject-item``. A ``div.item``
-    fallback is kept for older/alternate markup, but title similarity is never
-    used here to infer Work identity.
+    Current Douban Book list pages use ``li.subject-item`` with the canonical
+    title link under ``div.info > h2 > a``. A list item can contain additional
+    links to the same subject (for example a paper-book purchase/price link),
+    so arbitrary ``/subject/<id>/`` anchors must never be treated as titles.
 
-    The parser also captures the list's declared total when available. That
-    lets the caller fail closed if Douban says a list is non-empty but a future
-    HTML change causes the entry parser to return zero or only a partial list.
+    A conservative ``div.item`` fallback is kept for older/alternate markup.
+    The parser also captures the list's declared total when available so the
+    caller can fail closed if Douban changes its HTML and entry extraction
+    becomes partial.
     """
 
     def __init__(self) -> None:
@@ -60,6 +62,10 @@ class _HistoryPageParser(HTMLParser):
         self._item_tag: str | None = None
         self._item_depth = 0
         self._next_depth = 0
+        self._info_depth = 0
+        self._h2_depth = 0
+        self._legacy_title_depth = 0
+
         self._active_subject: str | None = None
         self._active_text: list[str] = []
         self._titles: dict[str, str] = {}
@@ -85,6 +91,17 @@ class _HistoryPageParser(HTMLParser):
         elif tag == "div" and "item" in classes:
             self._item_tag = "div"
             self._item_depth = 1
+
+        if self._item_tag is not None:
+            if tag == "div":
+                if self._info_depth:
+                    self._info_depth += 1
+                elif "info" in classes:
+                    self._info_depth = 1
+            if tag == "h2":
+                self._h2_depth += 1
+            if tag == "li" and "title" in classes:
+                self._legacy_title_depth += 1
 
         if tag == "span":
             if self._next_depth:
@@ -112,10 +129,27 @@ class _HistoryPageParser(HTMLParser):
             return
 
         subject_id = match.group("id")
+        title_attr = (attrs_map.get("title") or "").strip()
+
+        # Current Book lists: only the h2 anchor is authoritative. Older
+        # ``div.item`` markup may expose a ``li.title`` anchor, a title
+        # attribute, or one first subject link inside ``div.info``. In all
+        # cases, once a title is captured it is never overwritten by later
+        # purchase/price links to the same subject.
+        is_current_title_anchor = self._item_tag == "li" and self._h2_depth > 0
+        is_legacy_title_anchor = self._item_tag == "div" and (
+            self._legacy_title_depth > 0
+            or bool(title_attr)
+            or (self._info_depth > 0 and subject_id not in self._titles)
+        )
+        if not (is_current_title_anchor or is_legacy_title_anchor):
+            return
+        if subject_id in self._titles:
+            return
+
         if subject_id not in self._order:
             self._order.append(subject_id)
 
-        title_attr = (attrs_map.get("title") or "").strip()
         if title_attr:
             self._titles[subject_id] = title_attr
 
@@ -132,7 +166,7 @@ class _HistoryPageParser(HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag == "a" and self._active_subject:
             text = " ".join("".join(self._active_text).split())
-            if text:
+            if text and self._active_subject not in self._titles:
                 self._titles[self._active_subject] = text
             self._active_subject = None
             self._active_text = []
@@ -140,11 +174,21 @@ class _HistoryPageParser(HTMLParser):
         if tag == "title":
             self._in_title = False
 
+        if tag == "h2" and self._h2_depth:
+            self._h2_depth -= 1
+        if tag == "li" and self._legacy_title_depth:
+            self._legacy_title_depth -= 1
+        if tag == "div" and self._info_depth:
+            self._info_depth -= 1
+
         if self._item_tag == tag:
             self._item_depth -= 1
             if self._item_depth <= 0:
                 self._item_tag = None
                 self._item_depth = 0
+                self._info_depth = 0
+                self._h2_depth = 0
+                self._legacy_title_depth = 0
 
         if tag == "span" and self._next_depth:
             self._next_depth -= 1
