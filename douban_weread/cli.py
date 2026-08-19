@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from collections.abc import Callable, Sequence
 from typing import Protocol, TextIO
@@ -37,6 +38,20 @@ class BookInterestClient(Protocol):
 
 SearchClientFactory = Callable[[], BookSearchClient]
 InterestClientFactory = Callable[[], BookInterestClient]
+
+
+def _default_interest_client() -> DoubanBookInterestClient:
+    """Build the auth client from the local environment.
+
+    DevTools often displays the request header as ``Cookie: a=b; c=d`` while
+    the provider itself expects only the header value. Accept that common
+    one-line copy format, but do not try to parse multi-line request dumps or
+    shell commands.
+    """
+    cookie = os.getenv("DOUBAN_COOKIE", "").strip()
+    if "\n" not in cookie and cookie.lower().startswith("cookie:"):
+        cookie = cookie.split(":", 1)[1].strip()
+    return DoubanBookInterestClient(cookie=cookie)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -151,7 +166,7 @@ def run(
     argv: Sequence[str] | None = None,
     *,
     client_factory: SearchClientFactory = DoubanBookSearchClient,
-    interest_client_factory: InterestClientFactory = DoubanBookInterestClient,
+    interest_client_factory: InterestClientFactory = _default_interest_client,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
