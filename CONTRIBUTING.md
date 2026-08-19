@@ -24,3 +24,7 @@ If your contribution is inspired by or based on another open-source project:
 ## Development workflow
 
 Prefer small, focused pull requests. Include tests for matching and edition-resolution logic where possible.
+
+Before debugging a provider or environment failure, read [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). It records failures found during real-device validation and how we isolated the failing layer.
+
+When a new non-obvious pitfall, provider quirk, environment issue, or misleading failure mode is discovered, add it there using the `PIT-XXX` template. Record the symptom, diagnosis, root cause (or explicitly mark it uncertain), safe resolution, and a prevention/regression test where possible.
