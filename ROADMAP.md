@@ -14,6 +14,14 @@ Goal: identify a book accurately and mark the intended Douban edition as “Want
 - [ ] Prevent `READ` / `READING` from being downgraded to `WISH`
 - [ ] Detect other-edition `WISH` as an edition mismatch
 - [ ] Build a local Douban reading-history index from the user's WISH / READING / READ lists
+  - [x] Add read-only full baseline provider for `wish` / `do` / `collect`
+  - [x] Add local SQLite snapshot with sync metadata and state counts
+  - [x] Keep baseline sync lightweight: subject ID + title + state only
+  - [x] Add local-only `history status` and `history lookup`
+  - [ ] Live-validate a complete personal history sync
+  - [ ] Feed local history candidates into Work-level reconciliation
+  - [ ] Add periodic/incremental refresh after baseline semantics are validated
+  - [ ] Update local state directly after verified project-owned writes
 - [ ] Mark the selected Douban edition as `wish` only after reconciliation
 - [ ] Verify the saved state after every write
 - [ ] Add Feishu bot input for image/text/link
@@ -63,6 +71,8 @@ Goal: make Douban and WeRead point to the same practical reading edition without
 ## Engineering principles
 
 - Self-hosted first
+- Local-first history lookup after an explicit initial baseline sync
+- Do not refetch or send the user's complete reading history to an LLM for every capture
 - Work and Edition are separate entities
 - Reading state belongs to a specific platform + Edition and should be preserved
 - Known `READ` / `READING` state must not be silently downgraded to `WISH`

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sqlite3
 import sys
 from collections.abc import Callable, Sequence
 from http.cookies import SimpleCookie
@@ -10,16 +11,19 @@ from typing import Protocol, TextIO
 from douban_weread.core.models import Edition
 from douban_weread.providers.douban import (
     DoubanAuthError,
+    DoubanBookHistoryClient,
     DoubanBookInterestClient,
     DoubanBookSearchClient,
     DoubanProviderError,
     DoubanWriteVerificationError,
+    HistoryEntry,
 )
 from douban_weread.reconciliation import (
     DoubanWorkInspector,
     ReconciliationAction,
     ReconciliationDecision,
 )
+from douban_weread.storage import HistoryIndexStatus, ReadingHistoryIndex
 
 
 EXIT_OK = 0
@@ -46,8 +50,22 @@ class BookInterestClient(Protocol):
     def mark_wish(self, subject_id: str, *, confirmed: bool = False): ...
 
 
+class BookHistoryClient(Protocol):
+    def fetch_all(self) -> list[HistoryEntry]: ...
+
+
+class HistoryIndex(Protocol):
+    def replace_full(self, entries: list[HistoryEntry], *, synced_at: str | None = None) -> None: ...
+
+    def status(self) -> HistoryIndexStatus: ...
+
+    def find_title_candidates(self, title: str, *, limit: int = 30, min_similarity: float = 0.72): ...
+
+
 SearchClientFactory = Callable[[], BookSearchClient]
 InterestClientFactory = Callable[[], BookInterestClient]
+HistoryClientFactory = Callable[[], BookHistoryClient]
+HistoryIndexFactory = Callable[[], HistoryIndex]
 
 
 def _read_cookie_env() -> str:
@@ -67,6 +85,14 @@ def _default_interest_client() -> DoubanBookInterestClient:
     shell commands.
     """
     return DoubanBookInterestClient(cookie=_read_cookie_env())
+
+
+def _default_history_client() -> DoubanBookHistoryClient:
+    return DoubanBookHistoryClient(cookie=_read_cookie_env())
+
+
+def _default_history_index() -> ReadingHistoryIndex:
+    return ReadingHistoryIndex()
 
 
 def _diagnose_cookie_input() -> tuple[str, list[str]]:
@@ -134,6 +160,36 @@ def build_parser() -> argparse.ArgumentParser:
         default="6082808",
         help="Read-only Douban subject used for the authenticated endpoint probe.",
     )
+
+    history = subparsers.add_parser(
+        "history",
+        help="Build and inspect the local Douban reading-history baseline.",
+    )
+    history_subparsers = history.add_subparsers(dest="history_command", required=True)
+    history_sync = history_subparsers.add_parser(
+        "sync",
+        help="Synchronize Douban wish/reading/read lists into local SQLite.",
+        description=(
+            "Read-only provider operation. The first implementation supports an explicit full baseline sync only; "
+            "the local database is replaced atomically after all three Douban lists are fetched successfully."
+        ),
+    )
+    history_sync.add_argument(
+        "--full",
+        action="store_true",
+        required=True,
+        help="Fetch the complete wish/do/collect lists and replace the local baseline.",
+    )
+    history_subparsers.add_parser(
+        "status",
+        help="Show local baseline counts and last full-sync time without network access.",
+    )
+    history_lookup = history_subparsers.add_parser(
+        "lookup",
+        help="Search the local history baseline by title without network access.",
+    )
+    history_lookup.add_argument("query", help="Book title or approximate title to search locally.")
+    history_lookup.add_argument("--limit", type=int, default=20, help="Maximum local candidates to show.")
 
     status = subparsers.add_parser(
         "status",
@@ -229,6 +285,22 @@ def format_reconciliation(decision: ReconciliationDecision) -> str:
     return "\n".join(lines)
 
 
+def format_history_status(status: HistoryIndexStatus) -> str:
+    if not status.initialized or not status.complete:
+        return f"History baseline: not synced\nDatabase: {status.path}"
+    return "\n".join(
+        [
+            "History baseline: complete",
+            f"Total: {status.total}",
+            f"Want-to-Read: {status.wish}",
+            f"Reading: {status.reading}",
+            f"Read: {status.read}",
+            f"Last full sync: {status.last_full_sync_at}",
+            f"Database: {status.path}",
+        ]
+    )
+
+
 def _print_title_results(
     editions: Sequence[Edition],
     *,
@@ -286,6 +358,8 @@ def run(
     *,
     client_factory: SearchClientFactory = DoubanBookSearchClient,
     interest_client_factory: InterestClientFactory = _default_interest_client,
+    history_client_factory: HistoryClientFactory = _default_history_client,
+    history_index_factory: HistoryIndexFactory = _default_history_index,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
@@ -330,6 +404,57 @@ def run(
             return EXIT_OK
         print(f"Douban auth failed [{status.reason}]: {status.message}", file=stderr)
         return EXIT_PROVIDER_ERROR
+
+    if args.command == "history" and args.history_command == "sync":
+        client = history_client_factory()
+        index = history_index_factory()
+        try:
+            entries = client.fetch_all()
+            index.replace_full(entries)
+            sync_status = index.status()
+        except (DoubanAuthError, DoubanProviderError, ValueError, OSError, sqlite3.Error) as exc:
+            print(f"Douban history sync error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+
+        print("Douban history baseline synced successfully.", file=stdout)
+        print(format_history_status(sync_status), file=stdout)
+        return EXIT_OK
+
+    if args.command == "history" and args.history_command == "status":
+        index = history_index_factory()
+        try:
+            sync_status = index.status()
+        except (OSError, sqlite3.Error) as exc:
+            print(f"History database error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+        print(format_history_status(sync_status), file=stdout)
+        return EXIT_OK if sync_status.complete else EXIT_NO_RESULTS
+
+    if args.command == "history" and args.history_command == "lookup":
+        index = history_index_factory()
+        try:
+            sync_status = index.status()
+            candidates = index.find_title_candidates(
+                args.query,
+                limit=max(1, min(args.limit, 100)),
+            )
+        except (OSError, sqlite3.Error) as exc:
+            print(f"History database error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+
+        if not sync_status.complete:
+            print("History baseline is not complete. Run `douban-weread history sync --full` first.", file=stderr)
+            return EXIT_NO_RESULTS
+        if not candidates:
+            print(f'No local history candidates found for "{args.query}".', file=stdout)
+            return EXIT_NO_RESULTS
+
+        print(f'Local history candidates for "{args.query}":', file=stdout)
+        for entry in candidates:
+            label = {"wish": "WISH", "do": "READING", "collect": "READ"}.get(entry.state, entry.state.upper())
+            print(f"- {label} | subject {entry.subject_id} | {entry.title}", file=stdout)
+        print("Local title matches are candidates only; Work/Edition verification is still required.", file=stdout)
+        return EXIT_OK
 
     if args.command == "status":
         client = interest_client_factory()

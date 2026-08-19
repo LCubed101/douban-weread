@@ -316,3 +316,153 @@ The next reliability layer remains a local Douban reading-history index before r
 ### Write status
 
 No state-changing `wish` request was performed in this validation. A real write remains deferred until the account/session secret has been replaced after accidental exposure and the intended completeness boundary for historical-state checking is accepted or improved.
+
+## 2026-08-19 — History baseline parser-drift recovery
+
+The first live history sync exposed PIT-020: authenticated HTTP requests succeeded, but the old list parser returned zero entries and incorrectly marked the baseline complete. After the parser and baseline-version fixes were added, the complete local regression suite passed:
+
+```text
+Ran 95 tests in 0.046s
+OK
+```
+
+The previously written `complete + 0 rows` SQLite snapshot was then checked with:
+
+```bash
+douban-weread history status
+```
+
+Observed result:
+
+```text
+History baseline: not synced
+Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
+```
+
+This validates the migration/safety boundary: a baseline produced by the pre-fix parser is no longer trusted as complete after the parser schema version changes. No manual database deletion was required.
+
+## 2026-08-19 — Live Douban reading-history baseline sync
+
+After PIT-020 was fixed, the corrected history parser was run against the authenticated user's real Douban Book lists.
+
+Authentication diagnostics succeeded without exposing credential values:
+
+```text
+Cookie input kind: cookie_header
+Parsed cookie count: 15
+Has dbcl2: True
+Has ck: True
+Ready for auth check: True
+```
+
+The authenticated read-only probe also succeeded:
+
+```text
+Douban auth OK (user 182590900): Douban Cookie was accepted by the Book interest endpoint.
+```
+
+Command:
+
+```bash
+douban-weread history sync --full
+```
+
+Observed result:
+
+```text
+Douban history baseline synced successfully.
+History baseline: complete
+Total: 1747
+Want-to-Read: 1511
+Reading: 40
+Read: 196
+Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
+```
+
+The run validated authenticated traversal and counts, but the baseline was later found to be semantically invalid for title lookup. Positive lookups such as `白夜行` and `素食者` failed, and direct SQLite inspection showed many titles had been overwritten by later purchase links such as `纸质版 46.60元`.
+
+This is PIT-021. The subject IDs and states were present, but title extraction was not yet reliable enough for candidate discovery. The previous statement that the full-history baseline was ready for reconciliation is superseded by this finding.
+
+## 2026-08-19 — PIT-021 regression validation
+
+The parser was tightened so current Book-list titles come only from the canonical `li.subject-item > div.info > h2 > a` anchor. Arbitrary subject links and purchase/price links are no longer allowed to become or overwrite titles. The local baseline version was incremented so the corrupted non-zero v2 baseline cannot be reused.
+
+The updated regression suite passed locally:
+
+```text
+Ran 97 tests in 0.091s
+OK
+```
+
+Without deleting the SQLite file manually, the previously synced 1747-row v2 baseline now reports:
+
+```text
+History baseline: not synced
+Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
+```
+
+This validates the v2 → v3 safety boundary.
+
+## 2026-08-19 — v3 history baseline semantic validation
+
+A fresh authenticated read-only full sync rebuilt the baseline after PIT-021:
+
+```text
+Douban history baseline synced successfully.
+History baseline: complete
+Total: 1747
+Want-to-Read: 1511
+Reading: 40
+Read: 196
+Last full sync: 2026-08-19T11:08:42.065667+00:00
+```
+
+After removing `DOUBAN_COOKIE`, local status still reported the same complete baseline. A raw SQLite sample showed canonical Book titles such as `新哲人01`, `打造第二大脑`, `心智简史`, and `岩中花述：全四册` rather than purchase-price text.
+
+Positive local-only lookups then succeeded:
+
+```text
+Local history candidates for "白夜行":
+- READ | subject 3259440 | 白夜行
+- READ | subject 10554308 | 白夜行
+
+Local history candidates for "素食者":
+- READ | subject 35534519 | 素食者
+```
+
+The first `白夜行` lookup also exposed PIT-022: a one-character title `白` was incorrectly admitted by the old substring heuristic. The local candidate rule was tightened so one-character fragments cannot become containment matches and short stored titles must cover a meaningful portion of the query.
+
+The final regression suite passed:
+
+```text
+Ran 98 tests in 0.066s
+OK
+```
+
+Re-running the positive lookups after PIT-022 produced only the expected records:
+
+```text
+白夜行
+- READ | subject 3259440 | 白夜行
+- READ | subject 10554308 | 白夜行
+
+素食者
+- READ | subject 35534519 | 素食者
+```
+
+This closes live validation of the Reading History Index foundation:
+
+```text
+full Douban wish/do/collect traversal
+→ fail-closed completeness checks
+→ canonical title extraction
+→ versioned SQLite snapshot
+→ offline persistence after Cookie removal
+→ local title shortlist
+→ positive and negative lookup behavior
+→ no full-history LLM prompt
+```
+
+The next layer is history-aware reconciliation: use the validated local shortlist to discover historical subject IDs, lazily resolve full Edition metadata only for those candidates, verify same Work/Edition identity, and feed verified records into `inspect` before any state-changing `wish` action.
+
+No real state-changing Douban write was performed during any history validation run.
