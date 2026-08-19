@@ -29,6 +29,9 @@ Current Douban mapping:
 | `wish` | `WISH` |
 | `do` | `READING` |
 | `collect` | `READ` |
+| unrecognized value | `UNKNOWN` |
+
+`UNKNOWN` is not treated as `NONE`; it blocks mutation until the state can be interpreted safely.
 
 Future WeRead states will be mapped into the same provider-independent layer only after the actual WeRead capabilities are verified.
 
@@ -50,6 +53,7 @@ Examples:
 - another Edition of the same Work is `READ` → ask whether this is a reread
 - another Edition is `READING` → block a competing automatic `WISH`
 - another Edition is `WISH` → treat as an edition mismatch requiring review
+- any same-Work Edition has `UNKNOWN` state → fail closed
 - no known state for the Work → eligible for an explicitly confirmed `WISH`
 
 ## CLI
@@ -80,7 +84,7 @@ The `wish` command now performs the same reconciliation before mutation:
 douban-weread wish --subject 25837854 --confirm
 ```
 
-If reconciliation finds an existing `READ`, `READING`, or other-edition `WISH`, the command fails closed and performs no write.
+If reconciliation finds an existing `READ`, `READING`, other-edition `WISH`, or `UNKNOWN` state, the command fails closed and performs no write.
 
 ## Current discovery strategy
 
@@ -130,7 +134,7 @@ This history index should preserve the original platform state and Edition rathe
 Work
 ├── Editions
 ├── Douban states
-│   └── Edition → NONE / WISH / READING / READ
+│   └── Edition → NONE / WISH / READING / READ / UNKNOWN
 ├── WeRead states
 │   └── Edition → provider-verified state
 └── Reconciliation
@@ -147,6 +151,6 @@ WeRead state names must not be assumed until the provider is live-verified.
 - Never downgrade a known `READ` or `READING` state to `WISH` automatically.
 - Never treat a same-title different Edition as a harmless duplicate.
 - Never let title-only similarity authorize mutation.
-- Fail closed when state discovery fails.
+- Fail closed when state discovery fails or returns an unknown state.
 - Preserve all observed Edition identities and provider states for future reconciliation.
 - A real write still requires explicit confirmation and post-write verification.
