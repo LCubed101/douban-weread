@@ -4,6 +4,8 @@ This document records real failures encountered while developing and validating 
 
 The goal is not only to list fixes, but to preserve **how we distinguished environment problems, provider problems, parsing problems, and matching problems** so future contributors do not have to rediscover the same path.
 
+Successful end-to-end snapshots are recorded separately in [LIVE_VALIDATION.md](LIVE_VALIDATION.md).
+
 Last live validation: **2026-08-19**.
 
 ## Known-good baseline
