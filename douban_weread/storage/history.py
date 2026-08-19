@@ -104,6 +104,13 @@ class ReadingHistoryIndex:
             title = entry.title.strip()
             if not title:
                 raise ValueError(f"History subject {entry.subject_id} is missing a title.")
+
+            existing = rows.get(entry.subject_id)
+            if existing is not None and existing.state != entry.state:
+                raise ValueError(
+                    f"Douban subject {entry.subject_id} appeared in conflicting history states "
+                    f"({existing.state} and {entry.state}); refusing to replace the previous baseline."
+                )
             rows[entry.subject_id] = HistoryEntry(entry.subject_id, title, entry.state)
 
         counts = {state: 0 for state in _HISTORY_STATES}
@@ -245,6 +252,9 @@ class ReadingHistoryIndex:
             raise ValueError(f"Unsupported history state: {state}")
         if not subject_id.isdigit():
             raise ValueError("History subject IDs must contain digits only.")
+        clean_title = title.strip()
+        if not clean_title:
+            raise ValueError("History title must not be empty.")
         timestamp = datetime.now(timezone.utc).isoformat()
         self.initialize()
         with self._connect() as conn:
@@ -258,7 +268,7 @@ class ReadingHistoryIndex:
                     state=excluded.state,
                     last_seen_at=excluded.last_seen_at
                 """,
-                (subject_id, title.strip(), normalize_history_title(title), state, timestamp),
+                (subject_id, clean_title, normalize_history_title(clean_title), state, timestamp),
             )
 
     def _connect(self) -> sqlite3.Connection:
