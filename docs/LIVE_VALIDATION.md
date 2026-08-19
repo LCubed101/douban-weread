@@ -401,6 +401,68 @@ History baseline: not synced
 Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
 ```
 
-This validates the v2 → v3 safety boundary. A new authenticated read-only full sync is still required before the title index is considered live-validated. That next run must validate not only counts, but also raw stored titles and positive local lookups for titles known to exist in the source lists.
+This validates the v2 → v3 safety boundary.
 
-No state-changing Douban write has been performed during any history validation run.
+## 2026-08-19 — v3 history baseline semantic validation
+
+A fresh authenticated read-only full sync rebuilt the baseline after PIT-021:
+
+```text
+Douban history baseline synced successfully.
+History baseline: complete
+Total: 1747
+Want-to-Read: 1511
+Reading: 40
+Read: 196
+Last full sync: 2026-08-19T11:08:42.065667+00:00
+```
+
+After removing `DOUBAN_COOKIE`, local status still reported the same complete baseline. A raw SQLite sample showed canonical Book titles such as `新哲人01`, `打造第二大脑`, `心智简史`, and `岩中花述：全四册` rather than purchase-price text.
+
+Positive local-only lookups then succeeded:
+
+```text
+Local history candidates for "白夜行":
+- READ | subject 3259440 | 白夜行
+- READ | subject 10554308 | 白夜行
+
+Local history candidates for "素食者":
+- READ | subject 35534519 | 素食者
+```
+
+The first `白夜行` lookup also exposed PIT-022: a one-character title `白` was incorrectly admitted by the old substring heuristic. The local candidate rule was tightened so one-character fragments cannot become containment matches and short stored titles must cover a meaningful portion of the query.
+
+The final regression suite passed:
+
+```text
+Ran 98 tests in 0.066s
+OK
+```
+
+Re-running the positive lookups after PIT-022 produced only the expected records:
+
+```text
+白夜行
+- READ | subject 3259440 | 白夜行
+- READ | subject 10554308 | 白夜行
+
+素食者
+- READ | subject 35534519 | 素食者
+```
+
+This closes live validation of the Reading History Index foundation:
+
+```text
+full Douban wish/do/collect traversal
+→ fail-closed completeness checks
+→ canonical title extraction
+→ versioned SQLite snapshot
+→ offline persistence after Cookie removal
+→ local title shortlist
+→ positive and negative lookup behavior
+→ no full-history LLM prompt
+```
+
+The next layer is history-aware reconciliation: use the validated local shortlist to discover historical subject IDs, lazily resolve full Edition metadata only for those candidates, verify same Work/Edition identity, and feed verified records into `inspect` before any state-changing `wish` action.
+
+No real state-changing Douban write was performed during any history validation run.
