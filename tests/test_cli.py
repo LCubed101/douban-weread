@@ -49,14 +49,22 @@ class FakeClient:
 class FakeInterestClient:
     def __init__(self) -> None:
         self.auth_status = SimpleNamespace(ok=True, reason="ok", message="Cookie accepted.", user_id="123456")
+        self.current_status: str | None = None
         self.mark_result = SimpleNamespace(subject_id="6082808", verified=True)
         self.raise_error: Exception | None = None
         self.last_probe: str | None = None
+        self.last_status_subject: str | None = None
         self.last_mark: tuple[str, bool] | None = None
 
     def check_auth(self, *, probe_subject_id: str = "6082808"):
         self.last_probe = probe_subject_id
         return self.auth_status
+
+    def get_interest_status(self, subject_id: str) -> str | None:
+        self.last_status_subject = subject_id
+        if self.raise_error:
+            raise self.raise_error
+        return self.current_status
 
     def mark_wish(self, subject_id: str, *, confirmed: bool = False):
         self.last_mark = (subject_id, confirmed)
@@ -254,6 +262,37 @@ class CliTests(unittest.TestCase):
 
         self.assertEqual(code, EXIT_PROVIDER_ERROR)
         self.assertIn("missing_ck", stderr.getvalue())
+
+    def test_status_reads_current_interest_without_mutation(self) -> None:
+        interest = FakeInterestClient()
+        interest.current_status = "collect"
+        stdout = io.StringIO()
+
+        code = run(
+            ["status", "--subject", "25837854"],
+            interest_client_factory=lambda: interest,
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+
+        self.assertEqual(code, EXIT_OK)
+        self.assertEqual(interest.last_status_subject, "25837854")
+        self.assertIn("interest: collect", stdout.getvalue())
+        self.assertIsNone(interest.last_mark)
+
+    def test_status_prints_none_for_unmarked_subject(self) -> None:
+        interest = FakeInterestClient()
+        stdout = io.StringIO()
+
+        code = run(
+            ["status", "--subject", "25837854"],
+            interest_client_factory=lambda: interest,
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("interest: none", stdout.getvalue())
 
     def test_wish_without_confirm_returns_confirmation_exit_code(self) -> None:
         interest = FakeInterestClient()
