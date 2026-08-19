@@ -379,34 +379,28 @@ Read: 196
 Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
 ```
 
-This live-validates the corrected `li.subject-item` history ingestion path, pagination across the user's lists, state mapping for `wish` / `do` / `collect`, full-snapshot replacement, and the local SQLite persistence layer.
+The run validated authenticated traversal and counts, but the baseline was later found to be semantically invalid for title lookup. Positive lookups such as `白夜行` and `素食者` failed, and direct SQLite inspection showed many titles had been overwritten by later purchase links such as `纸质版 46.60元`.
 
-The full-history baseline is now available for local-first candidate discovery. The next integration step is to use this baseline to shortlist historical subject IDs, resolve full Edition metadata only for those candidates, and feed the verified same-Work records into reconciliation before any state-changing `wish` action.
+This is PIT-021. The subject IDs and states were present, but title extraction was not yet reliable enough for candidate discovery. The previous statement that the full-history baseline was ready for reconciliation is superseded by this finding.
 
-No real state-changing Douban write was performed during this validation.
+## 2026-08-19 — PIT-021 regression validation
 
-### Local-only lookup after Cookie removal
+The parser was tightened so current Book-list titles come only from the canonical `li.subject-item > div.info > h2 > a` anchor. Arbitrary subject links and purchase/price links are no longer allowed to become or overwrite titles. The local baseline version was incremented so the corrupted non-zero v2 baseline cannot be reused.
 
-After the full sync, the temporary `DOUBAN_COOKIE` was removed and the local index was queried without provider access.
-
-`history status` continued to report the persisted baseline counts:
+The updated regression suite passed locally:
 
 ```text
-Want-to-Read: 1511
-Reading: 40
-Read: 196
-Last full sync: 2026-08-19T09:40:22.610918+00:00
+Ran 97 tests in 0.091s
+OK
+```
+
+Without deleting the SQLite file manually, the previously synced 1747-row v2 baseline now reports:
+
+```text
+History baseline: not synced
 Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
 ```
 
-A local title lookup for the previously inspected target returned no candidates:
+This validates the v2 → v3 safety boundary. A new authenticated read-only full sync is still required before the title index is considered live-validated. That next run must validate not only counts, but also raw stored titles and positive local lookups for titles known to exist in the source lists.
 
-```bash
-douban-weread history lookup "荷马史诗：奥德赛"
-```
-
-```text
-No local history candidates found for "荷马史诗：奥德赛".
-```
-
-This validates the local-only negative lookup path. It is not considered a parser failure: the baseline remains complete, and the lookup result simply means no stored history title passed the local candidate threshold for this query. A positive lookup against a title known to exist in the user's history is still needed before the local lookup layer is considered fully live-validated.
+No state-changing Douban write has been performed during any history validation run.
