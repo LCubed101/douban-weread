@@ -10,6 +10,47 @@ A book title is not a unique identity. The same work may have multiple editions 
 
 `douban-weread` identifies the work and edition you discovered, checks what is actually available on WeRead, and then aligns your active Douban “Want to Read” edition with the practical edition you can read on WeRead.
 
+## Quick start: CLI search
+
+The first interface-independent demo can search public Douban Book web pages by title or ISBN without Feishu or WeRead credentials. Python 3.10+ is supported.
+
+```bash
+git clone https://github.com/LCubed101/douban-weread.git
+cd douban-weread
+git checkout agent/cli-search-demo
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install --upgrade pip
+python3 -m pip install -e .
+```
+
+Search by title:
+
+```bash
+python3 -m douban_weread search "百年孤独"
+# or, after installation:
+douban-weread search "百年孤独"
+```
+
+Search an exact edition by ISBN:
+
+```bash
+python3 -m douban_weread search --isbn 9787544253994
+```
+
+A title search intentionally prints multiple candidate editions when available so the user can compare translator, publisher, publication date, and ISBN before any future state-changing action.
+
+CLI exit codes:
+
+- `0` — success
+- `1` — Douban provider/network error
+- `2` — invalid CLI arguments (standard `argparse` behavior)
+- `3` — no matching edition found
+
+> The current Douban provider is read-only and uses public Douban Book web search plus subject pages. It does not depend on the legacy `api.douban.com/v2/book` endpoint. Because this is an unofficial web integration, Douban page structure or anti-bot behavior may change and should be handled conservatively.
+
+For real-world failure modes and fixes, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). For successful end-to-end smoke-test snapshots, see [docs/LIVE_VALIDATION.md](docs/LIVE_VALIDATION.md).
+
 ## User flow
 
 ```mermaid
