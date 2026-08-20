@@ -20,6 +20,7 @@ from .shelf_batch import (
     ReconciliationBatchResult,
     run_reconciliation_batch,
 )
+from .user_plan import UserPlanKind, UserReconciliationPlan, user_plan_for_batch_item
 
 __all__ = [
     "CrossPlatformStateAction",
@@ -41,4 +42,7 @@ __all__ = [
     "BatchItemResult",
     "ReconciliationBatchResult",
     "run_reconciliation_batch",
+    "UserPlanKind",
+    "UserReconciliationPlan",
+    "user_plan_for_batch_item",
 ]
