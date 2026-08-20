@@ -64,6 +64,71 @@ provider verification
 
 Evidence is deliberately written before the checkpoint. If evidence persistence fails, the item must not become a checkpoint-only success that would later be skipped despite having no reportable evidence. A retry can safely overwrite the same evidence key before checkpointing.
 
+## Checkpoint-only migration
+
+After evidence persistence was introduced, an item is considered completed only when both of these exist for the same baseline/policy generation:
+
+```text
+checkpoint
+AND
+normalized evidence row
+```
+
+This means checkpoint-only rows produced by an older build are automatically re-verified once, so they can acquire reportable evidence rather than being skipped forever.
+
+## Live persistence validation
+
+The complete regression suite passed before the first live evidence migration run:
+
+```text
+Ran 230 tests in 0.473s
+OK
+```
+
+Using the unchanged complete baseline pair and Douban → WeRead policy v3, two pre-existing checkpoint-only items were intentionally treated as not completed because they had no evidence rows yet. The live batch reported:
+
+```text
+Candidate queue: 1437
+Already checkpointed in this generation: 0
+Pending before batch: 1437
+Batch size: 2
+```
+
+The first result remained a bounded unresolved catalog result:
+
+```text
+Watching the English
+Douban state: do
+Catalog search window: <= 10
+WeRead catalog status: not_found
+Resolution: no_weread_edition
+User plan: weread_not_found
+User action required: no
+```
+
+The second result preserved the resolver-v3 alternative-Edition finding:
+
+```text
+三体
+Douban state: do
+Catalog search window: <= 10
+WeRead catalog status: available_alternative
+Resolution: alternative_edition
+Selected WeRead bookId: 178677
+Selected Edition: 三体1
+Current shelf membership: no
+User plan: review_edition
+User action required: yes
+```
+
+The batch completed with the explicit local persistence boundary:
+
+```text
+No mutation is performed. Verified normalized evidence is persisted locally before each checkpoint.
+```
+
+This live run validates the checkpoint-only migration path and confirms that normalized evidence persistence does not change the provider/resolver/user-plan semantics already established for the same inputs.
+
 ## Privacy and security boundary
 
 The evidence table must not contain:
@@ -81,7 +146,7 @@ It contains normalized reconciliation facts only. The existing local-first SQLit
 
 ## Reporting goal
 
-Once enough background items are verified, the evidence store is intended to support a report without re-running provider calls. The product-level aggregation should be expressed in stable user-plan categories such as:
+The evidence store supports a local report without re-running provider calls. Product-level aggregation is expressed in stable user-plan categories such as:
 
 ```text
 aligned
@@ -99,4 +164,4 @@ weread_unavailable
 weread_not_found
 ```
 
-This report layer is the next milestone after evidence persistence is regression-validated.
+The report must always expose verified coverage separately from the pending queue so a partially processed baseline is never presented as a full-library conclusion.
