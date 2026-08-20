@@ -37,11 +37,22 @@ The evidence is consistent with a temporary provider-side anti-abuse / access re
 
 The provider currently surfaces only the final HTTP status, so it cannot distinguish a generic forbidden response from a temporary challenge or other provider-side policy response.
 
+### Recovery observation — 2026-08-20
+
+After stopping further live Douban requests and waiting until the next day, one low-volume exact-subject probe was retried with `DOUBAN_COOKIE` still unset:
+
+```text
+DoubanBookSearchClient().get_by_subject_id("27112607")
+→ 白夜行 南海出版公司 2017-07 27112607
+```
+
+The same local code and machine therefore recovered without a code change, credential change, or bypass attempt. This strengthens the interpretation that the earlier 403 was temporary provider-side access control rather than a permanent parser or endpoint failure. It still does not prove the exact trigger or scope of the restriction.
+
 ### Root cause
 
-Not yet confirmed.
+Not confirmed.
 
-Likely category: provider-side access control / anti-abuse behavior after a comparatively large number of requests. The current evidence does not establish whether the restriction is keyed by IP, request pattern, redirect target, session state, or another signal.
+Likely category: temporary provider-side access control / anti-abuse behavior after a comparatively large number of requests. The current evidence does not establish whether the restriction is keyed by IP, request pattern, redirect target, session state, elapsed time, or another signal.
 
 ### Resolution
 
@@ -49,7 +60,8 @@ Likely category: provider-side access control / anti-abuse behavior after a comp
 - Do not retry in a tight loop.
 - Do not bypass captcha, anti-bot, or other provider protections.
 - Keep using the already-synced local history baseline while waiting for provider access to recover.
-- Resume live validation later with a single low-volume read-only probe before any broader scan.
+- Resume live validation later with one low-volume exact-subject probe before any broader scan.
+- If that probe succeeds, continue with targeted low-volume validation rather than immediately returning to a 20-candidate public search.
 
 No code path should convert this failure into a successful reconciliation decision.
 
@@ -57,6 +69,7 @@ No code path should convert this failure into a successful reconciliation decisi
 
 - Preserve the local-first architecture so most history checks require no network request.
 - Keep full-history sync explicit rather than automatic per lookup.
+- Prefer targeted subject fetches from the local history shortlist over broad public searches when validating history-aware reconciliation.
 - Add conservative retry/backoff or clearer 403 diagnostics before any future automated refresh loop.
 - Regression tests should continue to assert that provider errors fail closed and do not authorize a write.
 - A future provider diagnostic may safely report status/redirect classification without exposing cookies or response secrets.
