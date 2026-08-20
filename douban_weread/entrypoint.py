@@ -4,6 +4,11 @@ import sys
 
 
 def main() -> None:
+    if len(sys.argv) > 3 and sys.argv[1:4] == ["weread", "shelf", "batch"]:
+        from douban_weread.weread_shelf_batch_cli import run as run_weread_shelf_batch
+
+        raise SystemExit(run_weread_shelf_batch(sys.argv[4:]))
+
     if len(sys.argv) > 2 and sys.argv[1:3] == ["weread", "shelf"]:
         from douban_weread.weread_shelf_cli import run as run_weread_shelf
 
