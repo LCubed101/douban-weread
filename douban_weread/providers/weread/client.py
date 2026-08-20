@@ -36,6 +36,28 @@ class WeReadSearchCandidate:
     source_metadata: dict[str, object] = field(default_factory=dict, repr=False)
 
 
+@dataclass(slots=True, frozen=True)
+class WeReadProgress:
+    book_id: str
+    progress: int
+    is_started: bool
+    update_time: int | None = None
+    reading_time_seconds: int | None = None
+    finish_time: int | None = None
+    source_metadata: dict[str, object] = field(default_factory=dict, repr=False, compare=False)
+
+    @property
+    def reading_state(self) -> str:
+        """Conservatively map official progress evidence to a coarse state."""
+        if self.progress == 100:
+            return "read" if self.finish_time is not None else "unknown"
+        if 0 < self.progress < 100 or self.is_started:
+            return "reading"
+        if self.progress == 0 and not self.is_started:
+            return "unread"
+        return "unknown"
+
+
 @dataclass(slots=True)
 class _JsonResponse:
     status: int
@@ -139,6 +161,32 @@ class WeReadClient:
                 "raw_translator": translator_raw,
                 "raw": dict(payload),
             },
+        )
+
+    def get_progress(self, book_id: str) -> WeReadProgress | None:
+        """Fetch official read-only progress for one exact WeRead bookId."""
+        normalized_id = book_id.strip()
+        if not normalized_id:
+            return None
+
+        payload = self._call("/book/getprogress", bookId=normalized_id)
+        raw_book = payload.get("book")
+        if not isinstance(raw_book, dict):
+            raise WeReadProviderError("WeRead progress response is missing book metadata")
+
+        progress = _optional_int(raw_book.get("progress"))
+        if progress is None or not 0 <= progress <= 100:
+            raise WeReadProviderError("WeRead progress response has invalid progress")
+
+        returned_id = _optional_text(payload.get("bookId")) or normalized_id
+        return WeReadProgress(
+            book_id=returned_id,
+            progress=progress,
+            is_started=_as_bool_flag(raw_book.get("isStartReading")),
+            update_time=_optional_int(raw_book.get("updateTime")),
+            reading_time_seconds=_optional_int(raw_book.get("recordReadingTime")),
+            finish_time=_optional_int(raw_book.get("finishTime")),
+            source_metadata={"provider": "weread_official", "raw": dict(payload)},
         )
 
     def sync_shelf(self) -> WeReadShelfSnapshot:
