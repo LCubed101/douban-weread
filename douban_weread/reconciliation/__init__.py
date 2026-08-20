@@ -1,4 +1,11 @@
 from .douban import DoubanWorkInspector, IncompleteHistoryBaselineError
+from .evidence_scan import (
+    EvidenceScanGenerationChangedError,
+    EvidenceScanResult,
+    EvidenceScanStep,
+    normalize_scan_directions,
+    run_reconciliation_evidence_scan,
+)
 from .policy import (
     CrossPlatformStateAction,
     CrossPlatformStateDecision,
@@ -26,6 +33,9 @@ __all__ = [
     "CrossPlatformStateAction",
     "CrossPlatformStateDecision",
     "DoubanWorkInspector",
+    "EvidenceScanGenerationChangedError",
+    "EvidenceScanResult",
+    "EvidenceScanStep",
     "IncompleteHistoryBaselineError",
     "ReadingState",
     "ReconciliationAction",
@@ -36,6 +46,8 @@ __all__ = [
     "recommend_douban_state_from_weread",
     "reconcile_work_states",
     "weread_reading_state_from_progress",
+    "normalize_scan_directions",
+    "run_reconciliation_evidence_scan",
     "DOUBAN_TO_WEREAD",
     "WEREAD_TO_DOUBAN",
     "BatchGeneration",
