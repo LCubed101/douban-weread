@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 _ALLOWED_DIRECTIONS = {"weread-to-douban", "douban-to-weread"}
+CURRENT_RECONCILIATION_POLICY_VERSION = 2
 
 
 @dataclass(slots=True, frozen=True)
@@ -16,6 +17,7 @@ class ReconciliationCheckpoint:
     item_id: str
     shelf_sync_at: str
     history_sync_at: str
+    policy_version: int
     outcome: str
     recorded_at: str
 
@@ -31,12 +33,13 @@ def default_reconciliation_db_path() -> Path:
 
 
 class ReconciliationCheckpointStore:
-    """Baseline-scoped local checkpoints for bounded background reconciliation.
+    """Baseline- and policy-scoped local checkpoints for background reconciliation.
 
     A checkpoint never authorizes or records a remote mutation. It only prevents
     the same queue item from being re-verified repeatedly against the same pair
-    of complete local baselines. A new Douban-history or WeRead-shelf sync has a
-    new generation and therefore naturally becomes eligible for verification.
+    of complete local baselines under the same reconciliation policy version.
+    Refreshing either baseline or upgrading the policy makes the item eligible
+    for verification again.
     """
 
     def __init__(self, path: str | Path | None = None) -> None:
@@ -52,6 +55,7 @@ class ReconciliationCheckpointStore:
                     item_id TEXT NOT NULL,
                     shelf_sync_at TEXT NOT NULL,
                     history_sync_at TEXT NOT NULL,
+                    policy_version INTEGER NOT NULL DEFAULT 1,
                     outcome TEXT NOT NULL,
                     recorded_at TEXT NOT NULL,
                     PRIMARY KEY(direction, item_id, shelf_sync_at, history_sync_at)
@@ -61,6 +65,16 @@ class ReconciliationCheckpointStore:
                     ON reconciliation_checkpoints(direction, shelf_sync_at, history_sync_at);
                 """
             )
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(reconciliation_checkpoints)").fetchall()
+            }
+            if "policy_version" not in columns:
+                conn.execute(
+                    "ALTER TABLE reconciliation_checkpoints "
+                    "ADD COLUMN policy_version INTEGER NOT NULL DEFAULT 1"
+                )
+            conn.commit()
 
     def completed_ids(
         self,
@@ -68,8 +82,9 @@ class ReconciliationCheckpointStore:
         *,
         shelf_sync_at: str,
         history_sync_at: str,
+        policy_version: int = CURRENT_RECONCILIATION_POLICY_VERSION,
     ) -> set[str]:
-        self._validate_generation(direction, shelf_sync_at, history_sync_at)
+        self._validate_generation(direction, shelf_sync_at, history_sync_at, policy_version)
         if not self.path.exists():
             return set()
         self.initialize()
@@ -78,9 +93,9 @@ class ReconciliationCheckpointStore:
                 """
                 SELECT item_id
                 FROM reconciliation_checkpoints
-                WHERE direction=? AND shelf_sync_at=? AND history_sync_at=?
+                WHERE direction=? AND shelf_sync_at=? AND history_sync_at=? AND policy_version=?
                 """,
-                (direction, shelf_sync_at, history_sync_at),
+                (direction, shelf_sync_at, history_sync_at, policy_version),
             ).fetchall()
         return {str(row[0]) for row in rows}
 
@@ -92,9 +107,10 @@ class ReconciliationCheckpointStore:
         shelf_sync_at: str,
         history_sync_at: str,
         outcome: str,
+        policy_version: int = CURRENT_RECONCILIATION_POLICY_VERSION,
         recorded_at: str | None = None,
     ) -> None:
-        self._validate_generation(direction, shelf_sync_at, history_sync_at)
+        self._validate_generation(direction, shelf_sync_at, history_sync_at, policy_version)
         normalized_id = item_id.strip()
         normalized_outcome = outcome.strip()
         if not normalized_id:
@@ -108,10 +124,12 @@ class ReconciliationCheckpointStore:
             conn.execute(
                 """
                 INSERT INTO reconciliation_checkpoints(
-                    direction, item_id, shelf_sync_at, history_sync_at, outcome, recorded_at
+                    direction, item_id, shelf_sync_at, history_sync_at,
+                    policy_version, outcome, recorded_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(direction, item_id, shelf_sync_at, history_sync_at) DO UPDATE SET
+                    policy_version=excluded.policy_version,
                     outcome=excluded.outcome,
                     recorded_at=excluded.recorded_at
                 """,
@@ -120,6 +138,7 @@ class ReconciliationCheckpointStore:
                     normalized_id,
                     shelf_sync_at,
                     history_sync_at,
+                    policy_version,
                     normalized_outcome,
                     timestamp,
                 ),
@@ -132,29 +151,49 @@ class ReconciliationCheckpointStore:
         *,
         shelf_sync_at: str,
         history_sync_at: str,
+        policy_version: int = CURRENT_RECONCILIATION_POLICY_VERSION,
     ) -> list[ReconciliationCheckpoint]:
-        self._validate_generation(direction, shelf_sync_at, history_sync_at)
+        self._validate_generation(direction, shelf_sync_at, history_sync_at, policy_version)
         if not self.path.exists():
             return []
         self.initialize()
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT direction, item_id, shelf_sync_at, history_sync_at, outcome, recorded_at
+                SELECT direction, item_id, shelf_sync_at, history_sync_at,
+                       policy_version, outcome, recorded_at
                 FROM reconciliation_checkpoints
-                WHERE direction=? AND shelf_sync_at=? AND history_sync_at=?
+                WHERE direction=? AND shelf_sync_at=? AND history_sync_at=? AND policy_version=?
                 ORDER BY recorded_at, item_id
                 """,
-                (direction, shelf_sync_at, history_sync_at),
+                (direction, shelf_sync_at, history_sync_at, policy_version),
             ).fetchall()
-        return [ReconciliationCheckpoint(*map(str, row)) for row in rows]
+        return [
+            ReconciliationCheckpoint(
+                direction=str(row[0]),
+                item_id=str(row[1]),
+                shelf_sync_at=str(row[2]),
+                history_sync_at=str(row[3]),
+                policy_version=int(row[4]),
+                outcome=str(row[5]),
+                recorded_at=str(row[6]),
+            )
+            for row in rows
+        ]
 
     @staticmethod
-    def _validate_generation(direction: str, shelf_sync_at: str, history_sync_at: str) -> None:
+    def _validate_generation(
+        direction: str,
+        shelf_sync_at: str,
+        history_sync_at: str,
+        policy_version: int,
+    ) -> None:
         if direction not in _ALLOWED_DIRECTIONS:
             raise ValueError(f"Unsupported reconciliation direction: {direction}")
         if not shelf_sync_at.strip() or not history_sync_at.strip():
             raise ValueError("Complete baseline timestamps are required for reconciliation checkpoints")
+        if policy_version < 1:
+            raise ValueError("Reconciliation policy_version must be >= 1")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)
