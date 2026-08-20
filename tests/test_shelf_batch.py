@@ -160,6 +160,45 @@ class ShelfBatchTests(unittest.TestCase):
         )
         self.assertEqual(result.processed[0].item_id, "101")
 
+    def test_finished_nonprivate_shelf_item_is_prioritized_before_unfinished(self) -> None:
+        metadata = {
+            "100": ("A未读候选", "9780000000100"),
+            "101": ("Z已完成候选", "9780000000101"),
+        }
+        self.shelf.replace_full(
+            WeReadShelfSnapshot(
+                books=(
+                    WeReadShelfBook(book_id="100", title="A未读候选", author="作者"),
+                    WeReadShelfBook(
+                        book_id="101",
+                        title="Z已完成候选",
+                        author="作者",
+                        finish_reading=True,
+                    ),
+                ),
+                album_count=0,
+                has_mp=False,
+            ),
+            synced_at="shelf-v1",
+        )
+        self.history.replace_full([], synced_at="history-v1")
+        douban_map = {
+            title: (str(2100 + index), isbn)
+            for index, (_book_id, (title, isbn)) in enumerate(metadata.items())
+        }
+
+        result = run_reconciliation_batch(
+            WEREAD_TO_DOUBAN,
+            limit=1,
+            shelf_provider=self.shelf,
+            history_provider=self.history,
+            checkpoint_provider=self.checkpoints,
+            weread_provider=WeReadToDoubanFakeWeRead(metadata),
+            douban_provider=ExactDoubanSearch(douban_map),
+        )
+
+        self.assertEqual(result.processed[0].item_id, "101")
+
     def test_batch_size_is_hard_capped_at_five(self) -> None:
         metadata = self._sync_weread_only_books(7)
         douban_map = {
@@ -212,6 +251,44 @@ class ShelfBatchTests(unittest.TestCase):
             history_sync_at="history-v1",
         )
         self.assertEqual(completed, {"5001"})
+
+    def test_douban_reading_is_prioritized_before_wish(self) -> None:
+        self.shelf.replace_full(
+            WeReadShelfSnapshot(books=(), album_count=0, has_mp=False),
+            synced_at="shelf-v1",
+        )
+        self.history.replace_full(
+            [
+                HistoryEntry("5101", "A想读候选", "wish"),
+                HistoryEntry("5102", "Z在读候选", "do"),
+            ],
+            synced_at="history-v1",
+        )
+        douban = ExactDoubanSearch(
+            {
+                "A想读候选": ("5101", "9780000005101"),
+                "Z在读候选": ("5102", "9780000005102"),
+            }
+        )
+        weread = DoubanToWeReadFakeWeRead(
+            {
+                "A想读候选": ("9101", "9780000005101"),
+                "Z在读候选": ("9102", "9780000005102"),
+            }
+        )
+
+        result = run_reconciliation_batch(
+            DOUBAN_TO_WEREAD,
+            limit=1,
+            shelf_provider=self.shelf,
+            history_provider=self.history,
+            checkpoint_provider=self.checkpoints,
+            weread_provider=weread,
+            douban_provider=douban,
+        )
+
+        self.assertEqual(result.processed[0].item_id, "5102")
+        self.assertEqual(result.processed[0].source_state, "do")
 
     def test_douban_to_weread_detects_resolved_book_already_on_shelf_under_different_title(self) -> None:
         self.shelf.replace_full(
