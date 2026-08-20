@@ -50,6 +50,7 @@ class WeReadShelfCliTests(unittest.TestCase):
                     title="已读完的书",
                     author="作者",
                     finish_reading=True,
+                    read_update_time=123,
                     secret=True,
                 ),
             ),
@@ -149,13 +150,14 @@ class WeReadShelfCliTests(unittest.TestCase):
         self.assertFalse(self.index.status().complete)
         self.assertIn("WeRead shelf sync error: gateway unavailable", stderr.getvalue())
 
-    def test_preview_reads_both_complete_local_baselines_without_network(self) -> None:
+    def test_preview_focuses_sync_gap_on_active_douban_intent(self) -> None:
         self.index.replace_full(self.snapshot)
         self.history.replace_full(
             [
                 HistoryEntry("1", "白夜行", "collect"),
                 HistoryEntry("2", "豆瓣独有", "wish"),
                 HistoryEntry("3", "已读完的书", "wish"),
+                HistoryEntry("4", "过去读过但不在书架", "collect"),
             ]
         )
         stdout = io.StringIO()
@@ -172,12 +174,22 @@ class WeReadShelfCliTests(unittest.TestCase):
         self.assertEqual(code, EXIT_OK)
         output = stdout.getvalue()
         self.assertIn("Local two-sided reconciliation preview", output)
-        self.assertIn("Douban history entries: 3", output)
+        self.assertIn("Douban history entries: 4", output)
+        self.assertIn("Active intents (wish + reading): 2", output)
+        self.assertIn("Want-to-Read: 2", output)
+        self.assertIn("Reading: 0", output)
+        self.assertIn("Read history (not expected on current shelf): 2", output)
         self.assertIn("WeRead electronic shelf books: 2", output)
-        self.assertIn("Shared exact normalized title keys: 2", output)
-        self.assertIn("Douban-only by exact title: 1", output)
-        self.assertIn("WeRead-only by exact title: 0", output)
+        self.assertIn("Shelf books marked finished: 1", output)
+        self.assertIn("Shelf books with read-activity timestamp: 1", output)
+        self.assertIn("Shared exact normalized title keys (all Douban states): 2", output)
+        self.assertIn("Shared title keys involving active Douban intent: 1", output)
+        self.assertIn("Active Douban entries with exact-title shelf candidate: 1", output)
+        self.assertIn("Active Douban-only by exact title: 1", output)
+        self.assertIn("WeRead-only vs any Douban state by exact title: 0", output)
+        self.assertIn("WeRead shelf books overlapping Douban READ history by exact title: 1", output)
         self.assertIn("Possible finished/state conflicts: 1", output)
+        self.assertIn("READ history missing from the current shelf is not treated as a sync gap", output)
         self.assertIn("No mutation is authorized", output)
 
     def test_preview_requires_both_complete_baselines(self) -> None:
