@@ -1,6 +1,6 @@
 # WeRead search / availability research
 
-Status: **technical reconnaissance complete; official-provider implementation and read-only CLI landed; 123 local tests passing; live validation pending**.
+Status: **technical reconnaissance complete; official-provider implementation and read-only CLI landed; 123 local tests passing; first live search passed; /book/info live validation pending**.
 
 Date: 2026-08-20
 
@@ -156,7 +156,7 @@ COMING_SOON
 
 A search hit alone is not sufficient to declare `AVAILABLE_EXACT`; full `/book/info` metadata should be fetched before Edition identity is decided.
 
-Likewise, `soldout=0` means the item is listed/not documented as sold out, but the first live validation should verify that this is a reasonable product-level proxy for “available in WeRead.” Do not overstate “readable” before that live check.
+Likewise, `soldout=0` means the item is listed/not documented as sold out, but live validation should verify that this is a reasonable product-level proxy for “available in WeRead.” Do not overstate “readable” before that check.
 
 ## Provider boundary implemented
 
@@ -182,13 +182,14 @@ The transport is injectable for tests. API transport and response parsing stay i
 
 ## Read-only CLI implemented
 
-The project command now exposes a WeRead namespace through the top-level dispatcher:
+The project command exposes a WeRead namespace through the top-level dispatcher:
 
 ```bash
 douban-weread weread search "白夜行" --limit 5
+douban-weread weread book --id 230107
 ```
 
-The command performs read-only search and prints lightweight candidate metadata only. It does not infer `AVAILABLE_EXACT` or `AVAILABLE_ALTERNATIVE` from search hits alone; full `/book/info` metadata and resolver comparison are still required before those states may be assigned.
+`weread search` prints lightweight catalog candidates only. `weread book` performs a read-only `/book/info` lookup and prints normalized Edition metadata. Neither command mutates WeRead state, and neither assigns `AVAILABLE_EXACT` / `AVAILABLE_ALTERNATIVE` without resolver evidence.
 
 ## Error / safety boundary
 
@@ -219,7 +220,7 @@ The command performs read-only search and prints lightweight candidate metadata 
 
 Additional CLI / dispatch tests cover the `weread search` command and top-level command routing.
 
-The full local repository suite was rerun after the provider and CLI commits:
+The full local repository suite was rerun after the provider and first CLI commits:
 
 ```text
 Ran 123 tests in 0.060s
@@ -234,23 +235,65 @@ usage: douban-weread weread [-h] {search} ...
 Read-only WeRead search through Tencent's official Agent API.
 ```
 
-No live WeRead request was made during this validation.
+## Live search validation — 2026-08-20
+
+A user-bound API key was supplied only through the local `WEREAD_API_KEY` environment variable, then removed from the shell immediately after the request. The key value was not logged or committed.
+
+One low-volume live search was executed:
+
+```bash
+douban-weread weread search "白夜行" --limit 5
+```
+
+Observed candidates:
+
+```text
+1. 白夜行
+   Author: 东野圭吾
+   WeRead bookId: 230107
+   Sold out: no
+   Deep link: https://weread.qq.com/book-detail?type=1&v=65032c105382db65050e7aa
+
+2. 半小时讲透《白夜行》
+   Author: 屈辛
+   WeRead bookId: 3300189515
+   Sold out: no
+
+3. 恶意
+   Author: 东野圭吾
+   WeRead bookId: 3300020529
+   Sold out: no
+
+4. 解忧杂货店
+   Author: 东野圭吾
+   WeRead bookId: 3300020527
+   Sold out: no
+
+5. 白夜行者何平饭店
+   Author: 鬼哭老朽
+   WeRead bookId: 26855676
+   Sold out: no
+```
+
+This live run validates that the official `/store/search` path works in the real runtime and that the provider correctly surfaces the expected title/author/bookId/soldout/deep-link fields. The exact-title candidate appears first as `bookId=230107`.
+
+This does **not** yet prove exact Edition identity or full readability. The next evidence required is `/book/info` for `230107`, followed by comparison with the known Douban `白夜行` Editions through the existing resolver.
 
 ## Remaining milestone
 
-1. Obtain `WEREAD_API_KEY` locally from the official WeRead Skills page.
-2. Run one low-volume live `weread search` query.
-3. Fetch `/book/info` for one returned `bookId` and compare it with a known Douban Edition through the existing resolver.
+1. Rerun the local test suite after the `weread book` CLI addition.
+2. Fetch `/book/info` for live WeRead `bookId=230107`.
+3. Compare that normalized WeRead Edition with known Douban `白夜行` Editions through the existing resolver.
 4. Verify whether `soldout=0` is consistent with an actually openable/readable WeRead listing.
 5. Only after live evidence confirms the semantics, wire `AVAILABLE_EXACT` / `AVAILABLE_ALTERNATIVE` into the cross-platform `ReadingIntent` flow.
 
 ## Live validation target
 
-A good first target remains `白夜行` because the Douban side already has multiple known Editions and the resolver behavior is understood. WeRead live validation should answer:
+`白夜行` remains the first target because the Douban side already has multiple known Editions and the resolver behavior is understood. The remaining live validation should answer:
 
 ```text
-Which WeRead Edition(s) are returned?
-What ISBN / translator / publisher / publishTime does /book/info provide?
+What ISBN / translator / publisher / publishTime does /book/info return for bookId 230107?
+Which known Douban Edition is it closest to?
 Does compare_editions(Douban Edition, WeRead Edition) classify exact vs alternative correctly?
 Is soldout consistent with an actually openable/readable WeRead listing?
 ```
