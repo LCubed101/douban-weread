@@ -13,6 +13,7 @@ from douban_weread.reconciliation import (
     DOUBAN_TO_WEREAD,
     WEREAD_TO_DOUBAN,
     run_reconciliation_batch,
+    user_plan_for_batch_item,
 )
 from douban_weread.reconciliation.shelf_verify import IncompleteShelfVerificationBaselineError
 from douban_weread.storage import (
@@ -132,6 +133,7 @@ def run(
         for index, item in enumerate(result.processed, start=1):
             verification = item.shelf_verification
             assert verification is not None
+            plan = user_plan_for_batch_item(item)
             print(f"\n{index}. {item.title}", file=stdout)
             print(f"   WeRead bookId: {item.item_id}", file=stdout)
             print(f"   WeRead state: {verification.weread_state.value}", file=stdout)
@@ -150,12 +152,16 @@ def run(
                 file=stdout,
             )
             print(f"   Requires user decision: {verification.decision.requires_user_decision}", file=stdout)
+            print(f"   User plan: {plan.kind.value}", file=stdout)
+            print(f"   Summary: {plan.summary}", file=stdout)
+            print(f"   User action required: {'yes' if plan.requires_user_action else 'no'}", file=stdout)
             print("   Checkpointed for this baseline: yes", file=stdout)
     else:
         for index, item in enumerate(result.processed, start=1):
             alignment = item.catalog_alignment
             assert alignment is not None
             intent = alignment.intent
+            plan = user_plan_for_batch_item(item)
             print(f"\n{index}. {item.title}", file=stdout)
             print(f"   Douban subject: {item.item_id}", file=stdout)
             if item.source_state:
@@ -180,6 +186,9 @@ def run(
             if intent.source_url:
                 print(f"   Deep link: {intent.source_url}", file=stdout)
             print(f"   Outcome: {item.outcome}", file=stdout)
+            print(f"   User plan: {plan.kind.value}", file=stdout)
+            print(f"   Summary: {plan.summary}", file=stdout)
+            print(f"   User action required: {'yes' if plan.requires_user_action else 'no'}", file=stdout)
             print("   Checkpointed for this baseline: yes", file=stdout)
 
     print(f"\nProcessed this batch: {len(result.processed)}", file=stdout)
