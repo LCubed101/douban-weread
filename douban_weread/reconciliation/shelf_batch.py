@@ -13,7 +13,6 @@ from douban_weread.reconciliation.shelf_verify import (
     verify_shelf_book,
 )
 from douban_weread.storage import (
-    CURRENT_RECONCILIATION_POLICY_VERSION,
     IndexedHistoryEntry,
     IndexedWeReadShelfBook,
     ReconciliationCheckpointStore,
@@ -24,6 +23,10 @@ from douban_weread.storage import (
 WEREAD_TO_DOUBAN = "weread-to-douban"
 DOUBAN_TO_WEREAD = "douban-to-weread"
 _BATCH_DIRECTIONS = {WEREAD_TO_DOUBAN, DOUBAN_TO_WEREAD}
+_POLICY_VERSION_BY_DIRECTION = {
+    WEREAD_TO_DOUBAN: 1,
+    DOUBAN_TO_WEREAD: 2,
+}
 _MAX_BATCH_SIZE = 5
 _MAX_CATALOG_WINDOW = 10
 
@@ -154,9 +157,9 @@ def run_reconciliation_batch(
     window (up to 10 candidates) because a false negative is more costly for a
     book the user is currently reading.
 
-    Checkpoints are scoped to both baseline timestamps and the reconciliation
-    policy version. A policy upgrade therefore re-verifies stale conclusions
-    without requiring either platform baseline to be refreshed.
+    Checkpoints are scoped to both baseline timestamps and a direction-specific
+    reconciliation policy version. A policy upgrade therefore re-verifies only
+    the affected direction instead of invalidating unrelated successful work.
     """
 
     if direction not in _BATCH_DIRECTIONS:
@@ -176,7 +179,7 @@ def run_reconciliation_batch(
     generation = BatchGeneration(
         shelf_sync_at=shelf_status.last_full_sync_at,
         history_sync_at=history_status.last_full_sync_at,
-        policy_version=CURRENT_RECONCILIATION_POLICY_VERSION,
+        policy_version=_POLICY_VERSION_BY_DIRECTION[direction],
     )
     report = build_shelf_preview(
         history_provider.all_entries(),
