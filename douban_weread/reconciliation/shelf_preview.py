@@ -148,7 +148,10 @@ def build_shelf_preview(
         douban_read=sum(entry.state == "collect" for entry in douban_entries),
         weread_total=len(weread_books),
         weread_finished=sum(book.finish_reading for book in weread_books),
-        weread_with_read_activity=sum(book.read_update_time is not None for book in weread_books),
+        weread_with_read_activity=sum(
+            book.read_update_time is not None and book.read_update_time > 0
+            for book in weread_books
+        ),
         shared_title_keys=len(shared_keys),
         active_shared_title_keys=len(active_shared_keys),
         douban_entries_with_exact_title=len(douban_matched),
