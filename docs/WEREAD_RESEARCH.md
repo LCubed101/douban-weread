@@ -1,6 +1,6 @@
 # WeRead search / availability research
 
-Status: **technical reconnaissance complete; implementation not started**.
+Status: **technical reconnaissance complete; official-provider implementation landed; local regression and live validation pending**.
 
 Date: 2026-08-20
 
@@ -115,7 +115,7 @@ cover        -> Edition.cover_url
 raw fields   -> Edition.source_metadata
 ```
 
-`author` and `translator` are documented as strings. Provider normalization should split conservatively and preserve the raw values in `source_metadata`; parsing must not invent people when the delimiter is ambiguous.
+`author` and `translator` are documented as strings. Provider normalization should be conservative and preserve raw values in `source_metadata`; parsing must not invent people when the delimiter is ambiguous.
 
 ## Availability semantics
 
@@ -158,9 +158,9 @@ A search hit alone is not sufficient to declare `AVAILABLE_EXACT`; full `/book/i
 
 Likewise, `soldout=0` means the item is listed/not documented as sold out, but the first live validation should verify that this is a reasonable product-level proxy for “available in WeRead.” Do not overstate “readable” before that live check.
 
-## Proposed provider boundary
+## Provider boundary implemented
 
-Add a narrow provider package:
+The first implementation now exists under:
 
 ```text
 douban_weread/providers/weread/
@@ -168,7 +168,7 @@ douban_weread/providers/weread/
   client.py
 ```
 
-Initial public interface:
+Initial interface:
 
 ```python
 class WeReadClient:
@@ -176,44 +176,46 @@ class WeReadClient:
     def get_book(self, book_id: str) -> Edition | None: ...
 ```
 
-`WeReadSearchCandidate` should retain lightweight search metadata needed before `/book/info`, including at least:
+`WeReadSearchCandidate` retains lightweight search metadata including `book_id`, title, raw author, publisher, `soldout`, `deep_link`, `search_idx`, and source metadata.
 
-```text
-book_id
-title
-author
-publisher
-soldout
-deep_link
-search_idx
-source_metadata
-```
-
-Keep API transport and response parsing inside the provider. The resolver must remain provider-agnostic.
+The transport is injectable for tests. API transport and response parsing stay inside the provider; the existing resolver remains provider-agnostic.
 
 ## Error / safety boundary
 
-- `WEREAD_API_KEY` is read from the local environment only.
+- `WEREAD_API_KEY` is supplied locally only.
 - Never print or persist the key.
-- Non-2xx, non-zero gateway errors, malformed JSON, and documented upgrade responses should fail explicitly rather than silently becoming `NOT_FOUND`.
+- A missing or obviously malformed key fails before any network request.
+- Non-2xx, non-zero gateway errors, malformed JSON, and documented `upgrade_info` responses fail explicitly rather than silently becoming `NOT_FOUND`.
 - `NOT_FOUND` is a catalog/matching result, not a network-error fallback.
 - No WeRead write operation is needed for v0.2.
 - Do not reverse-engineer browser cookies or reader-content signatures for this search/status milestone while the official API covers the required read-only metadata.
 
-## First implementation milestone
+## Regression coverage added
 
-1. Implement the official gateway transport with injectable transport for tests.
-2. Implement `/store/search` e-book parsing with explicit `scope=10`.
-3. Implement `/book/info` normalization to `Edition`.
-4. Add unit tests for grouped search responses, `scope=17` response groups, `soldout`, missing optional metadata, gateway/provider errors, and secret-safe errors.
-5. Add a read-only CLI command for live validation, e.g.:
+`tests/test_weread.py` now covers:
 
-```bash
-douban-weread weread search "白夜行" --limit 5
-```
+- missing / malformed API key fail-before-network behavior;
+- explicit `scope=10` request construction;
+- documented `scope=17` e-book response-group behavior;
+- `soldout` parsing;
+- cross-group `bookId` deduplication;
+- blank searches without network traffic;
+- `/book/info` normalization into the existing `Edition` model;
+- raw person-field preservation;
+- non-zero gateway errors;
+- typed auth failures;
+- `upgrade_info` fail-closed behavior;
+- invalid JSON and non-2xx responses.
 
-6. Obtain `WEREAD_API_KEY` locally and run one low-volume live search.
-7. Fetch `/book/info` for one returned `bookId` and compare it with a known Douban Edition through the existing resolver.
+The full repository suite still needs to be rerun locally after these commits.
+
+## Remaining implementation milestone
+
+1. Run the full local regression suite.
+2. Add a small read-only CLI surface after provider tests are green.
+3. Obtain `WEREAD_API_KEY` locally and run one low-volume live search.
+4. Fetch `/book/info` for one returned `bookId` and compare it with a known Douban Edition through the existing resolver.
+5. Only after live evidence confirms the semantics, wire `AVAILABLE_EXACT` / `AVAILABLE_ALTERNATIVE` into the cross-platform `ReadingIntent` flow.
 
 ## Live validation target
 
