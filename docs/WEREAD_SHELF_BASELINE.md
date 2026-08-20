@@ -1,6 +1,6 @@
 # WeRead shelf baseline
 
-Status: **design established from official `/shelf/sync`; implementation starts on `agent/weread-shelf-baseline`.**
+Status: **official `/shelf/sync` provider and local SQLite baseline implemented on `agent/weread-shelf-baseline`; local regression pending.**
 
 Date: 2026-08-20
 
@@ -56,39 +56,71 @@ The shelf response also contains `archive[].name` / `archive[].bookIds` for shel
 
 ## Local-first model
 
-The first full shelf sync should persist a local SQLite baseline rather than calling `/shelf/sync` for every operation.
+The implementation persists the WeRead baseline into the same configurable SQLite database used by the project (`DOUBAN_WEREAD_DB` when set, otherwise `~/.local/share/douban-weread/history.sqlite3`) using separate `weread_shelf_*` tables.
 
-Suggested row model for electronic books:
+Electronic-book rows preserve lightweight shelf metadata:
 
 ```text
 book_id
-name/title
+title/title_key
 author
 deep_link
-cover_url
 category
 read_update_time
 finish_reading
 update_time
 is_top
 secret
-raw_snapshot_version
 last_seen_at
 ```
 
-Baseline metadata should also preserve:
+Baseline metadata preserves:
 
 ```text
 last_full_sync_at
 book_count
 album_count
 has_mp
-archive metadata or snapshot
+archive metadata
 baseline_complete
 schema/version
 ```
 
-A full replacement should be atomic: if provider fetching/parsing fails, keep the previous complete local baseline rather than replacing it with a partial shelf.
+A full replacement is atomic. Provider/parser failure happens before replacement, and storage validation also happens before deleting the previous baseline.
+
+## Implemented provider boundary
+
+`WeReadClient.sync_shelf()` calls exactly:
+
+```json
+{
+  "api_name": "/shelf/sync",
+  "skill_version": "1.0.4"
+}
+```
+
+It normalizes `books[]` into `WeReadShelfBook`, preserves archive membership, counts `albums[]`, and records whether `mp` is present. The computed visible shelf count follows the official contract:
+
+```text
+books.length + albums.length + (mp present ? 1 : 0)
+```
+
+Malformed book entries, duplicate `bookId`s, invalid arrays, and provider errors fail closed rather than producing a partial baseline.
+
+## Implemented local index
+
+`WeReadShelfIndex` now supports:
+
+```text
+replace_full(snapshot)
+status()
+get(book_id)
+find_title_candidates(title)
+```
+
+Local title lookup is a shortlist only. Work/Edition identity still requires the existing resolver plus lazy `/book/info` requests for the small set of candidates that matter.
+
+The implementation deliberately does **not** call `/book/info` once for every shelf item during full sync.
 
 ## Reconciliation semantics
 
@@ -118,20 +150,33 @@ A WeRead shelf item is not automatically equivalent to Douban WISH. Shelf presen
 
 The first shelf milestone is read-only:
 
-1. `/shelf/sync` provider support.
-2. Local shelf SQLite baseline.
-3. Status / local lookup CLI.
-4. Reconciliation report.
+1. `/shelf/sync` provider support — implemented.
+2. Local shelf SQLite baseline — implemented.
+3. Status / local lookup CLI — next after regression passes.
+4. Reconciliation report — after the baseline is live-validated.
 5. No automatic writes.
 
 Automatic application can be considered later only for separately defined safe cases and explicit user settings/confirmation.
 
-## First implementation slice
+## Regression coverage added
 
-1. Add `WeReadClient.sync_shelf()` with injectable transport coverage.
-2. Normalize `books[]`, while preserving `albums[]`, `mp`, and archives as baseline metadata.
-3. Add a `WeReadShelfIndex` SQLite store with atomic full replacement.
-4. Add read-only CLI commands:
+Eight tests were added for the first shelf slice:
+
+- exact zero-parameter `/shelf/sync` request construction;
+- `books[]` normalization;
+- `albums[]` + `mp` accounting without converting them into books;
+- invalid/missing book metadata fail-closed behavior;
+- duplicate `bookId` fail-closed behavior;
+- atomic local baseline persistence and status counts;
+- local title shortlist behavior;
+- preservation of the previous complete baseline when replacement validation fails;
+- safe uninitialized status.
+
+The full suite still needs to be run locally before adding the shelf CLI or making the first live full-shelf request.
+
+## Next implementation slice
+
+After the local suite is green, add:
 
 ```bash
 douban-weread weread shelf sync
@@ -139,6 +184,4 @@ douban-weread weread shelf status
 douban-weread weread shelf lookup "白夜行"
 ```
 
-5. Run local tests before the first live shelf sync.
-
-Do not call `/book/info` once per entire shelf during baseline sync. `/shelf/sync` already provides the lightweight fields needed for local indexing; full Edition metadata should be fetched lazily only for reconciliation candidates that actually need identity verification.
+Only after those commands are covered by tests should the first real `/shelf/sync` be run with the user's local API key.
