@@ -6,6 +6,7 @@ import sys
 from collections.abc import Callable, Sequence
 from typing import Protocol, TextIO
 
+from douban_weread.core.models import Edition
 from douban_weread.providers.weread import (
     WeReadClient,
     WeReadProviderError,
@@ -21,6 +22,8 @@ EXIT_NO_RESULTS = 3
 class WeReadSearchClient(Protocol):
     def search_books(self, keyword: str, *, count: int = 10) -> list[WeReadSearchCandidate]: ...
 
+    def get_book(self, book_id: str) -> Edition | None: ...
+
 
 WeReadClientFactory = Callable[[], WeReadSearchClient]
 
@@ -32,7 +35,7 @@ def _default_client() -> WeReadClient:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="douban-weread weread",
-        description="Read-only WeRead search through Tencent's official Agent API.",
+        description="Read-only WeRead search and metadata lookup through Tencent's official Agent API.",
     )
     subparsers = parser.add_subparsers(dest="weread_command", required=True)
 
@@ -51,6 +54,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=5,
         help="Maximum search candidates requested from WeRead (default: 5).",
     )
+
+    book = subparsers.add_parser(
+        "book",
+        help="Fetch normalized metadata for one exact WeRead bookId.",
+        description=(
+            "Read-only /book/info lookup. Prints normalized Edition metadata for resolver validation; "
+            "it does not change WeRead state."
+        ),
+    )
+    book.add_argument("--id", required=True, dest="book_id", help="Exact WeRead bookId to inspect.")
     return parser
 
 
@@ -64,6 +77,27 @@ def format_search_candidate(candidate: WeReadSearchCandidate, *, index: int) -> 
     lines.append(f"   Sold out: {'yes' if candidate.soldout else 'no'}")
     if candidate.deep_link:
         lines.append(f"   Deep link: {candidate.deep_link}")
+    return "\n".join(lines)
+
+
+def format_book(edition: Edition) -> str:
+    lines = [edition.title]
+    if edition.authors:
+        lines.append(f"   Authors: {', '.join(edition.authors)}")
+    if edition.translators:
+        lines.append(f"   Translators: {', '.join(edition.translators)}")
+    publication = " · ".join(
+        value for value in (edition.publisher, edition.publish_date) if value
+    )
+    if publication:
+        lines.append(f"   Publication: {publication}")
+    if edition.isbn:
+        lines.append(f"   ISBN: {edition.isbn}")
+    if edition.weread_id:
+        lines.append(f"   WeRead bookId: {edition.weread_id}")
+    deep_link = edition.source_metadata.get("deep_link")
+    if isinstance(deep_link, str) and deep_link.strip():
+        lines.append(f"   Deep link: {deep_link.strip()}")
     return "\n".join(lines)
 
 
@@ -99,6 +133,26 @@ def run(
                 print(file=stdout)
         print(
             "\nSearch hits are catalog candidates only. `Sold out: no` is not yet treated as proof of exact Edition identity or readability.",
+            file=stdout,
+        )
+        return EXIT_OK
+
+    if args.weread_command == "book":
+        client = client_factory()
+        try:
+            edition = client.get_book(args.book_id)
+        except (WeReadProviderError, ValueError) as exc:
+            print(f"WeRead provider error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+
+        if edition is None:
+            print(f"No WeRead book metadata found for bookId {args.book_id}.", file=stdout)
+            return EXIT_NO_RESULTS
+
+        print("WeRead book metadata:\n", file=stdout)
+        print(format_book(edition), file=stdout)
+        print(
+            "\nMetadata is normalized for Edition comparison; availability classification still requires resolver evidence.",
             file=stdout,
         )
         return EXIT_OK
