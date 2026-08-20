@@ -118,11 +118,73 @@ This validates the exact-target no-op path against the live provider: a target a
 
 The Cookie was removed from the shell after the read-only test. No state-changing Douban write was performed.
 
+## 2026-08-20 — first verified state-changing `wish`
+
+A third real target was selected for the first state-changing validation: subject `38540433` (`听妈妈的话`, 李凡, 上海译文出版社, 2026-08, ISBN `9787580702531`).
+
+The authenticated read-only preflight used a tiny live-search bound:
+
+```bash
+douban-weread inspect --subject 38540433 --limit 1
+```
+
+Observed state and decision:
+
+```text
+NONE [target] | subject 38540433 | 上海译文出版社 · 2026-08 · 9787580702531
+
+Decision: safe_to_wish
+Safe to write Want-to-Read: True
+Requires user decision: True
+Reason: No existing Want-to-Read, reading, or read state was found for the resolved Work. The selected edition may proceed to an explicitly confirmed Want-to-Read write.
+```
+
+After explicit user confirmation, the real write command was executed:
+
+```bash
+douban-weread wish --subject 38540433 --confirm
+```
+
+Observed result:
+
+```text
+Douban subject 38540433 is now marked Want-to-Read and the saved state was verified.
+```
+
+This confirms that the remote mutation succeeded and the provider's post-write read-back verification observed the saved `WISH` state.
+
+The Cookie was then removed from the shell, and the local SQLite baseline was checked without any network request:
+
+```bash
+douban-weread history lookup "听妈妈的话"
+```
+
+Observed local state:
+
+```text
+Local history candidates for "听妈妈的话":
+- WISH | subject 38540433 | 听妈妈的话
+```
+
+This validates the complete project-owned write path:
+
+```text
+SAFE_TO_WISH reconciliation
+→ explicit user confirmation
+→ remote Douban mutation
+→ post-write remote read-back verification
+→ local SQLite update
+→ local WISH lookup succeeds
+```
+
+The write was limited to the explicitly selected subject `38540433`; no other reading state was changed.
+
 ## Status
 
-History-aware reconciliation is now live-validated for both:
+History-aware reconciliation is now live-validated for three important paths:
 
-- the forgotten-history safety case, where another Edition of the same Work is already `READ` and the target must be blocked with `ASK_REREAD`;
-- the exact-target idempotency case, where the selected Edition is already `WISH` and the command returns `NOOP_ALREADY_WISH`.
+- forgotten-history safety: another Edition of the same Work is already `READ` → `ASK_REREAD`, write blocked;
+- exact-target idempotency: target is already `WISH` → `NOOP_ALREADY_WISH`, no duplicate write;
+- safe mutation: target is `NONE`, no conflicting same-Work history exists → explicit confirmed `wish` succeeds, remote state is read-back verified, and local SQLite is updated to `WISH`.
 
-The next separate validation, if performed, should be a deliberately selected first real `wish` on a target that history-aware reconciliation classifies as safe. That mutation still requires explicit user confirmation and post-write read-back verification.
+The Douban-side reconciliation and project-owned Want-to-Read write loop is therefore live-validated end to end. The next product layer should focus on WeRead search / availability and cross-platform Edition alignment rather than expanding this Douban foundation further.
