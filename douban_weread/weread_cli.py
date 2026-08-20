@@ -6,6 +6,7 @@ import sys
 from collections.abc import Callable, Sequence
 from typing import Protocol, TextIO
 
+from douban_weread.alignment import align_to_weread
 from douban_weread.core.models import Edition
 from douban_weread.providers.douban import DoubanBookSearchClient, DoubanProviderError
 from douban_weread.providers.weread import (
@@ -42,7 +43,7 @@ def _default_client() -> WeReadClient:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="douban-weread weread",
-        description="Read-only WeRead search, metadata lookup, and cross-platform Edition comparison.",
+        description="Read-only WeRead search, metadata lookup, Edition comparison, and alignment.",
     )
     subparsers = parser.add_subparsers(dest="weread_command", required=True)
 
@@ -82,6 +83,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compare.add_argument("--subject", required=True, help="Exact Douban Book subject ID.")
     compare.add_argument("--id", required=True, dest="book_id", help="Exact WeRead bookId.")
+
+    resolve = subparsers.add_parser(
+        "resolve",
+        help="Resolve one Douban Edition to an available WeRead Edition.",
+        description=(
+            "Read-only bounded alignment. Fetches the exact Douban subject, searches official WeRead, resolves "
+            "candidate metadata, and maps resolver evidence into ReadingIntent availability."
+        ),
+    )
+    resolve.add_argument("--subject", required=True, help="Exact Douban Book subject ID to align.")
+    resolve.add_argument(
+        "--limit",
+        type=int,
+        default=5,
+        help="Maximum WeRead search candidates considered (default: 5).",
+    )
     return parser
 
 
@@ -220,6 +237,56 @@ def run(
             "Availability: not assigned by this command; search `soldout` evidence is evaluated separately.",
             file=stdout,
         )
+        return EXIT_OK
+
+    if args.weread_command == "resolve":
+        weread_client = client_factory()
+        douban_client = douban_client_factory()
+        try:
+            source = douban_client.get_by_subject_id(args.subject)
+        except (DoubanProviderError, ValueError) as exc:
+            print(f"Douban provider error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+
+        if source is None:
+            print(f"No Douban Edition found for subject {args.subject}.", file=stdout)
+            return EXIT_NO_RESULTS
+
+        try:
+            aligned = align_to_weread(
+                source,
+                weread_client,
+                limit=max(1, min(args.limit, 100)),
+            )
+        except (WeReadProviderError, ValueError) as exc:
+            print(f"WeRead provider error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+
+        intent = aligned.intent
+        print("Cross-platform ReadingIntent:\n", file=stdout)
+        print(f"Work: {intent.work.canonical_title}", file=stdout)
+        print(f"Douban subject: {source.douban_id or args.subject}", file=stdout)
+        print(f"WeRead status: {intent.weread_status.value}", file=stdout)
+        print(f"Resolution: {intent.resolution.value}", file=stdout)
+        print(f"Examined WeRead Editions: {aligned.examined_candidates}", file=stdout)
+
+        if intent.selected_edition is not None:
+            print("\nSelected WeRead Edition:\n", file=stdout)
+            print(format_book(intent.selected_edition), file=stdout)
+        if aligned.candidate is not None:
+            print(f"   Search sold out: {'yes' if aligned.candidate.soldout else 'no'}", file=stdout)
+        if aligned.match is not None:
+            print("\nResolver evidence:", file=stdout)
+            print(f"Match: {aligned.match.kind.value}", file=stdout)
+            print(f"Same Work: {aligned.match.same_work}", file=stdout)
+            print(f"Exact Edition: {aligned.match.exact_edition}", file=stdout)
+            print(f"Requires confirmation: {aligned.match.requires_confirmation}", file=stdout)
+            if aligned.match.reasons:
+                print(f"Reasons: {'; '.join(aligned.match.reasons)}", file=stdout)
+        if intent.notes:
+            print("\nNotes:", file=stdout)
+            for note in intent.notes:
+                print(f"- {note}", file=stdout)
         return EXIT_OK
 
     parser.error(f"unsupported WeRead command: {args.weread_command}")
