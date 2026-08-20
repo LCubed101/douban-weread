@@ -12,8 +12,12 @@ from douban_weread.providers.weread import (
     WeReadProviderError,
     WeReadShelfSnapshot,
 )
+from douban_weread.reconciliation.shelf_preview import build_shelf_preview
 from douban_weread.storage import (
+    HistoryIndexStatus,
+    IndexedHistoryEntry,
     IndexedWeReadShelfBook,
+    ReadingHistoryIndex,
     WeReadShelfIndex,
     WeReadShelfIndexStatus,
 )
@@ -33,6 +37,8 @@ class ShelfIndex(Protocol):
 
     def status(self) -> WeReadShelfIndexStatus: ...
 
+    def all_books(self) -> list[IndexedWeReadShelfBook]: ...
+
     def find_title_candidates(
         self,
         title: str,
@@ -42,8 +48,15 @@ class ShelfIndex(Protocol):
     ) -> list[IndexedWeReadShelfBook]: ...
 
 
+class HistoryIndex(Protocol):
+    def status(self) -> HistoryIndexStatus: ...
+
+    def all_entries(self) -> list[IndexedHistoryEntry]: ...
+
+
 ShelfClientFactory = Callable[[], WeReadShelfClient]
 ShelfIndexFactory = Callable[[], ShelfIndex]
+HistoryIndexFactory = Callable[[], HistoryIndex]
 
 
 def _default_client() -> WeReadClient:
@@ -52,6 +65,10 @@ def _default_client() -> WeReadClient:
 
 def _default_index() -> WeReadShelfIndex:
     return WeReadShelfIndex()
+
+
+def _default_history_index() -> ReadingHistoryIndex:
+    return ReadingHistoryIndex()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -81,6 +98,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     lookup.add_argument("query", help="Book title or approximate title to search locally.")
     lookup.add_argument("--limit", type=int, default=20, help="Maximum local candidates to show.")
+
+    preview = subparsers.add_parser(
+        "preview",
+        help="Compare the complete local Douban and WeRead baselines by exact normalized title.",
+        description=(
+            "Local-only two-sided reconciliation preview. Exact normalized title overlap is a shortlist signal only; "
+            "it does not claim same Work/Edition identity and never changes either platform."
+        ),
+    )
+    preview.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum examples shown for each one-sided/conflict section (default: 10).",
+    )
     return parser
 
 
@@ -116,6 +148,7 @@ def run(
     *,
     client_factory: ShelfClientFactory = _default_client,
     index_factory: ShelfIndexFactory = _default_index,
+    history_index_factory: HistoryIndexFactory = _default_history_index,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
@@ -176,6 +209,72 @@ def run(
             print(f"- {format_lookup_candidate(item)}", file=stdout)
         print(
             "Local shelf title matches are candidates only; Work/Edition verification is still required.",
+            file=stdout,
+        )
+        return EXIT_OK
+
+    if args.shelf_command == "preview":
+        shelf_index = index_factory()
+        history_index = history_index_factory()
+        try:
+            shelf_status = shelf_index.status()
+            history_status = history_index.status()
+            if not shelf_status.complete or not history_status.complete:
+                print(
+                    "Both complete baselines are required. Sync Douban history and WeRead shelf first.",
+                    file=stderr,
+                )
+                return EXIT_NO_RESULTS
+            report = build_shelf_preview(
+                history_index.all_entries(),
+                shelf_index.all_books(),
+            )
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            print(f"Local reconciliation preview error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+
+        example_limit = max(1, min(args.limit, 100))
+        print("Local two-sided reconciliation preview:", file=stdout)
+        print(f"Douban history entries: {report.douban_total}", file=stdout)
+        print(f"WeRead electronic shelf books: {report.weread_total}", file=stdout)
+        print(f"Shared exact normalized title keys: {report.shared_title_keys}", file=stdout)
+        print(
+            f"Douban entries with exact-title shelf candidate: {report.douban_entries_with_exact_title}",
+            file=stdout,
+        )
+        print(
+            f"WeRead books with exact-title Douban candidate: {report.weread_books_with_exact_title}",
+            file=stdout,
+        )
+        print(f"Douban-only by exact title: {len(report.douban_only_entries)}", file=stdout)
+        print(f"WeRead-only by exact title: {len(report.weread_only_books)}", file=stdout)
+        print(f"Ambiguous shared title keys: {report.ambiguous_shared_title_keys}", file=stdout)
+        print(f"Possible finished/state conflicts: {len(report.possible_state_conflicts)}", file=stdout)
+
+        if report.weread_only_books:
+            print("\nWeRead-only examples (title-only preview):", file=stdout)
+            for book in report.weread_only_books[:example_limit]:
+                print(f"- {format_lookup_candidate(book)}", file=stdout)
+
+        if report.douban_only_entries:
+            print("\nDouban-only examples (title-only preview):", file=stdout)
+            for entry in report.douban_only_entries[:example_limit]:
+                print(
+                    f"- subject {entry.subject_id} | {entry.title} | state: {entry.state}",
+                    file=stdout,
+                )
+
+        if report.possible_state_conflicts:
+            print("\nPossible state-conflict examples (singleton exact-title only):", file=stdout)
+            for conflict in report.possible_state_conflicts[:example_limit]:
+                print(
+                    f"- {conflict.title} | Douban {conflict.douban_state} ({conflict.douban_subject_id}) "
+                    f"| WeRead finished=yes ({conflict.weread_book_id})",
+                    file=stdout,
+                )
+
+        print(
+            "\nPreview only: exact title overlap is not Work/Edition verification. No mutation is authorized by this report.",
             file=stdout,
         )
         return EXIT_OK
