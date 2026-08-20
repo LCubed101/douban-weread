@@ -1,6 +1,7 @@
 from .client import (
     WeReadAuthError,
     WeReadClient,
+    WeReadProgress,
     WeReadProviderError,
     WeReadSearchCandidate,
 )
@@ -13,6 +14,7 @@ from .shelf import (
 __all__ = [
     "WeReadAuthError",
     "WeReadClient",
+    "WeReadProgress",
     "WeReadProviderError",
     "WeReadSearchCandidate",
     "WeReadShelfArchive",
