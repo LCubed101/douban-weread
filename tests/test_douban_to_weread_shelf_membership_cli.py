@@ -139,6 +139,34 @@ class DoubanToWeReadShelfMembershipCliTests(unittest.TestCase):
         self.assertEqual(evidence[0].user_plan, "aligned")
         self.assertEqual(evidence[0].shelf_membership, "yes")
 
+    def test_checkpoint_without_evidence_is_reverified_once(self) -> None:
+        self.shelf.replace_full(
+            WeReadShelfSnapshot(books=(), album_count=0, has_mp=False),
+            synced_at="shelf-v1",
+        )
+        self.checkpoints.mark_completed(
+            "douban-to-weread",
+            "5001",
+            shelf_sync_at="shelf-v1",
+            history_sync_at="history-v1",
+            policy_version=3,
+            outcome="available_exact",
+        )
+
+        output = self._run()
+
+        self.assertIn("Already checkpointed in this generation: 0", output)
+        self.assertIn("Processed this batch: 1", output)
+        evidence = ReconciliationEvidenceStore(self.path).list_generation(
+            "douban-to-weread",
+            shelf_sync_at="shelf-v1",
+            history_sync_at="history-v1",
+            policy_version=3,
+        )
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0].item_id, "5001")
+        self.assertEqual(evidence[0].user_plan, "add_to_weread_shelf_exact")
+
 
 if __name__ == "__main__":
     unittest.main()
