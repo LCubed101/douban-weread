@@ -36,8 +36,8 @@ class ReconciliationEvidenceReportTests(unittest.TestCase):
         )
         self.history.replace_full(
             [
-                HistoryEntry("d1", "豆瓣在读", "do"),
-                HistoryEntry("d2", "豆瓣想读", "wish"),
+                HistoryEntry("1001", "豆瓣在读", "do"),
+                HistoryEntry("1002", "豆瓣想读", "wish"),
             ],
             synced_at="history-v1",
         )
@@ -62,7 +62,7 @@ class ReconciliationEvidenceReportTests(unittest.TestCase):
         self.evidence.upsert(
             ReconciliationEvidence(
                 direction=DOUBAN_TO_WEREAD,
-                item_id="d1",
+                item_id="1001",
                 shelf_sync_at="shelf-v1",
                 history_sync_at="history-v1",
                 policy_version=3,
@@ -72,7 +72,7 @@ class ReconciliationEvidenceReportTests(unittest.TestCase):
                 user_plan="review_edition",
                 summary="review edition",
                 requires_user_action=True,
-                selected_douban_subject="d1",
+                selected_douban_subject="1001",
                 selected_weread_book_id="9001",
                 shelf_membership="no",
             )
@@ -102,7 +102,7 @@ class ReconciliationEvidenceReportTests(unittest.TestCase):
         self.evidence.upsert(
             ReconciliationEvidence(
                 direction=DOUBAN_TO_WEREAD,
-                item_id="d1",
+                item_id="1001",
                 shelf_sync_at="shelf-v1",
                 history_sync_at="history-v1",
                 policy_version=2,
