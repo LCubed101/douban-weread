@@ -241,6 +241,22 @@ class WeReadShelfIndex:
             ).fetchone()
         return self._row_to_book(row) if row else None
 
+    def all_books(self) -> list[IndexedWeReadShelfBook]:
+        """Return the complete local electronic-book shelf without network access."""
+        if not self.path.exists():
+            return []
+        self.initialize()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT book_id, title, author, deep_link, category,
+                       finish_reading, read_update_time, secret, title_key, last_seen_at
+                FROM weread_shelf_books
+                ORDER BY title_key, book_id
+                """
+            ).fetchall()
+        return [self._row_to_book(row) for row in rows]
+
     def find_title_candidates(self, title: str, *, limit: int = 30, min_similarity: float = 0.72) -> list[IndexedWeReadShelfBook]:
         if not self.path.exists():
             return []
