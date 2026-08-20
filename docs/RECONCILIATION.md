@@ -1,6 +1,6 @@
 # Work-Level Reading-State Reconciliation
 
-Status: **history-aware reconciliation implemented, regression-tested, and live-validated for the forgotten-history safety path**.
+Status: **history-aware reconciliation implemented, regression-tested, and live-validated through a verified real `WISH` mutation**.
 
 ## Why this layer exists
 
@@ -204,7 +204,44 @@ Requires user decision: True
 
 This demonstrates the intended safety property: a currently unmarked target Edition is not considered safe to mark Want-to-Read when other same-Work Editions exist in the complete local history as `READ`. The historical subjects were supplied by the local index despite the deliberately tiny live-search bound, then resolved to full Edition metadata and verified as the same Work before affecting the decision.
 
-No state-changing Douban write was performed in this validation.
+A second live case used subject `37252290` (`心智简史`) and correctly returned `NOOP_ALREADY_WISH`, validating exact-target idempotency against the real provider.
+
+A third live case used subject `38540433` (`听妈妈的话`, 上海译文出版社, 2026-08, ISBN `9787580702531`). The read-only preflight returned:
+
+```text
+NONE [target] | subject 38540433 | 上海译文出版社 · 2026-08 · 9787580702531
+Decision: safe_to_wish
+Safe to write Want-to-Read: True
+Requires user decision: True
+```
+
+After explicit user confirmation, the project executed:
+
+```bash
+douban-weread wish --subject 38540433 --confirm
+```
+
+and observed:
+
+```text
+Douban subject 38540433 is now marked Want-to-Read and the saved state was verified.
+```
+
+After the Cookie was removed, a local-only lookup returned:
+
+```text
+WISH | subject 38540433 | 听妈妈的话
+```
+
+This live-validates the complete intended mutation path:
+
+```text
+SAFE_TO_WISH
+→ explicit confirmation
+→ remote write
+→ remote read-back verification
+→ local SQLite update
+```
 
 ## Known boundary
 
@@ -221,4 +258,4 @@ Future improvements may add more local discovery signals (author/title aliases o
 - Fail closed when a shortlisted historical candidate cannot be resolved.
 - Fail closed on unknown provider states.
 - Preserve the stronger known state when local snapshot and current provider state disagree.
-- A real write still requires explicit confirmation and post-write verification.
+- A real write requires explicit confirmation and post-write verification.
