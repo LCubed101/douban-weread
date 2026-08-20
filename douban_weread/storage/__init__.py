@@ -5,6 +5,11 @@ from .history import (
     default_history_db_path,
     normalize_history_title,
 )
+from .reconciliation_checkpoint import (
+    ReconciliationCheckpoint,
+    ReconciliationCheckpointStore,
+    default_reconciliation_db_path,
+)
 from .weread_shelf import (
     IndexedWeReadShelfBook,
     WeReadShelfIndex,
@@ -19,6 +24,9 @@ __all__ = [
     "ReadingHistoryIndex",
     "default_history_db_path",
     "normalize_history_title",
+    "ReconciliationCheckpoint",
+    "ReconciliationCheckpointStore",
+    "default_reconciliation_db_path",
     "IndexedWeReadShelfBook",
     "WeReadShelfIndex",
     "WeReadShelfIndexStatus",
