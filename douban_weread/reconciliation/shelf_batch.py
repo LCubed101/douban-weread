@@ -105,6 +105,7 @@ class BatchItemResult:
     source_state: str | None = None
     shelf_verification: ShelfVerificationResult | None = None
     catalog_alignment: WeReadAlignmentResult | None = None
+    selected_shelf_book: IndexedWeReadShelfBook | None = None
 
 
 @dataclass(slots=True)
@@ -229,6 +230,11 @@ def run_reconciliation_batch(
                 weread_provider,
                 limit=max(1, min(weread_catalog_limit, 10)),
             )
+            selected_shelf_book = None
+            selected_edition = alignment.intent.selected_edition
+            if selected_edition is not None and selected_edition.weread_id:
+                selected_shelf_book = shelf_provider.get(selected_edition.weread_id)
+
             outcome = alignment.intent.weread_status.value
             checkpoint_provider.mark_completed(
                 direction,
@@ -245,6 +251,7 @@ def run_reconciliation_batch(
                     outcome=outcome,
                     source_state=entry.state,
                     catalog_alignment=alignment,
+                    selected_shelf_book=selected_shelf_book,
                 )
             )
 
@@ -253,7 +260,13 @@ def run_reconciliation_batch(
         direction=direction,
         generation=generation,
         candidate_total=len(candidates),
-        already_completed=len(completed & {item.book_id if direction == WEREAD_TO_DOUBAN else item.subject_id for item in candidates}),
+        already_completed=len(
+            completed
+            & {
+                item.book_id if direction == WEREAD_TO_DOUBAN else item.subject_id
+                for item in candidates
+            }
+        ),
         pending_before=pending_before,
         processed=tuple(processed),
         remaining_after=max(0, pending_before - len(processed)),
