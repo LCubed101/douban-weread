@@ -30,6 +30,30 @@ class EntrypointTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         run_shelf.assert_called_once_with(["lookup", "白夜行"])
 
+    def test_weread_shelf_batch_routes_to_checkpointed_batch_cli(self) -> None:
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "douban-weread",
+                    "weread",
+                    "shelf",
+                    "batch",
+                    "--direction",
+                    "weread-to-douban",
+                    "--limit",
+                    "2",
+                ],
+            ),
+            patch("douban_weread.weread_shelf_batch_cli.run", return_value=0) as run_batch,
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                entrypoint.main()
+
+        self.assertEqual(raised.exception.code, 0)
+        run_batch.assert_called_once_with(["--direction", "weread-to-douban", "--limit", "2"])
+
     def test_existing_commands_still_route_to_original_cli(self) -> None:
         with (
             patch.object(sys, "argv", ["douban-weread", "history", "status"]),
