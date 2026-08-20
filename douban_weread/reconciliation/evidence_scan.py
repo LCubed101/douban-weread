@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Callable, Sequence
 
@@ -19,6 +20,7 @@ from .shelf_batch import (
 _SCAN_DIRECTIONS = (DOUBAN_TO_WEREAD, WEREAD_TO_DOUBAN)
 _MAX_SCAN_ITEMS = 20
 _MAX_BATCH_SIZE = 5
+_MAX_SCAN_SECONDS = 120.0
 
 
 class EvidenceScanGenerationChangedError(RuntimeError):
@@ -43,6 +45,9 @@ class EvidenceScanResult:
     effective_max_items: int
     requested_batch_size: int
     effective_batch_size: int
+    requested_max_seconds: float
+    effective_max_seconds: float
+    elapsed_seconds: float
     processed_total: int
     steps: tuple[EvidenceScanStep, ...]
     stop_reason: str
@@ -80,10 +85,12 @@ def run_reconciliation_evidence_scan(
     evidence_provider: EvidenceProvider,
     weread_provider: WeReadBatchProvider,
     douban_provider: DoubanBatchProvider,
+    max_seconds: float = 30.0,
     douban_search_limit: int = 3,
     history_candidate_limit: int = 5,
     weread_catalog_limit: int = 5,
     on_step: Callable[[EvidenceScanStep], None] | None = None,
+    clock: Callable[[], float] = time.monotonic,
 ) -> EvidenceScanResult:
     """Fill a bounded amount of reconciliation evidence with visible progress.
 
@@ -96,25 +103,36 @@ def run_reconciliation_evidence_scan(
     remain safely persisted and a later invocation resumes from their evidence +
     checkpoints. The scan also fails closed if either complete baseline timestamp
     changes while the process is running.
+
+    A wall-clock budget is checked between tiny batches. An in-flight provider
+    request is never interrupted; instead the scan stops before starting the next
+    batch once the budget has been reached.
     """
 
     normalized_directions = normalize_scan_directions(directions)
     requested_max_items = max_items
     requested_batch_size = batch_size
+    requested_max_seconds = float(max_seconds)
     effective_max_items = max(1, min(max_items, _MAX_SCAN_ITEMS))
     effective_batch_size = max(1, min(batch_size, _MAX_BATCH_SIZE))
+    effective_max_seconds = max(1.0, min(requested_max_seconds, _MAX_SCAN_SECONDS))
 
     active = set(normalized_directions)
     steps: list[EvidenceScanStep] = []
     processed_total = 0
     expected_baselines: tuple[str, str] | None = None
     stop_reason = "complete"
+    started_at = clock()
+    timed_out = False
 
     while active and processed_total < effective_max_items:
         made_progress = False
         for direction in normalized_directions:
             if direction not in active or processed_total >= effective_max_items:
                 continue
+            if clock() - started_at >= effective_max_seconds:
+                timed_out = True
+                break
 
             remaining_budget = effective_max_items - processed_total
             limit = min(effective_batch_size, remaining_budget)
@@ -166,18 +184,20 @@ def run_reconciliation_evidence_scan(
             if result.remaining_after == 0:
                 active.discard(direction)
 
+        if timed_out:
+            stop_reason = "time_budget"
+            break
         if not made_progress:
             stop_reason = "no_progress" if active else "complete"
             break
-    else:
+
+    if stop_reason not in {"time_budget", "no_progress"}:
         if processed_total >= effective_max_items and active:
             stop_reason = "max_items"
         elif not active:
             stop_reason = "complete"
 
-    if processed_total >= effective_max_items and active:
-        stop_reason = "max_items"
-
+    finished_at = clock()
     shelf_sync_at = expected_baselines[0] if expected_baselines is not None else None
     history_sync_at = expected_baselines[1] if expected_baselines is not None else None
     return EvidenceScanResult(
@@ -186,6 +206,9 @@ def run_reconciliation_evidence_scan(
         effective_max_items=effective_max_items,
         requested_batch_size=requested_batch_size,
         effective_batch_size=effective_batch_size,
+        requested_max_seconds=requested_max_seconds,
+        effective_max_seconds=effective_max_seconds,
+        elapsed_seconds=max(0.0, finished_at - started_at),
         processed_total=processed_total,
         steps=tuple(steps),
         stop_reason=stop_reason,
