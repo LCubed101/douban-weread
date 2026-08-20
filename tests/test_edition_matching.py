@@ -162,6 +162,62 @@ class EditionMatchingTests(unittest.TestCase):
         self.assertIn("revision/abridgement/annotation markers differ", result.material_differences)
         self.assertTrue(result.requires_confirmation)
 
+    def test_first_volume_suffix_can_verify_same_work_without_relaxing_global_threshold(self) -> None:
+        source = edition(
+            title="三体",
+            authors=["刘慈欣"],
+            publisher="重庆出版社",
+            publish_date="2008-01",
+            isbn="9787536692930",
+        )
+        candidate = edition(
+            title="三体1",
+            authors=["刘慈欣"],
+            publisher="重庆出版社",
+            publish_date="2022-04-01",
+            isbn="9787229166922",
+        )
+
+        result = compare_editions(source, candidate)
+
+        self.assertTrue(result.same_work)
+        self.assertEqual(result.kind, MatchKind.ALTERNATIVE_EDITION)
+        self.assertFalse(result.exact_edition)
+        self.assertTrue(result.requires_confirmation)
+        self.assertFalse(result.safe_to_auto_apply)
+        self.assertIn("first-volume title variant", result.reasons)
+        self.assertIn("ISBN differs", result.edition_differences)
+        self.assertIn("publication year differs", result.edition_differences)
+
+    def test_first_volume_suffix_relation_is_symmetric(self) -> None:
+        source = edition(title="三体1", authors=["刘慈欣"])
+        candidate = edition(title="三体", authors=["刘慈欣"])
+
+        result = compare_editions(source, candidate)
+
+        self.assertTrue(result.same_work)
+        self.assertEqual(result.kind, MatchKind.ALTERNATIVE_EDITION)
+        self.assertTrue(result.requires_confirmation)
+        self.assertIn("first-volume title variant", result.reasons)
+
+    def test_second_volume_is_not_mistaken_for_base_work(self) -> None:
+        source = edition(title="三体", authors=["刘慈欣"])
+        candidate = edition(title="三体2·黑暗森林", authors=["刘慈欣"])
+
+        result = compare_editions(source, candidate)
+
+        self.assertFalse(result.same_work)
+        self.assertNotIn("first-volume title variant", result.reasons)
+
+    def test_boxed_set_is_not_mistaken_for_base_work(self) -> None:
+        source = edition(title="三体", authors=["刘慈欣"])
+        candidate = edition(title="三体全集（全三册）", authors=["刘慈欣"])
+
+        result = compare_editions(source, candidate)
+
+        self.assertFalse(result.same_work)
+        self.assertNotIn("first-volume title variant", result.reasons)
+
     def test_rank_editions_places_exact_isbn_first(self) -> None:
         source = edition(isbn="9787544253994", translators=["范晔"])
         alternative = edition(isbn="9780000000000", translators=["范晔"])
