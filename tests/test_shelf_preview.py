@@ -16,7 +16,13 @@ def douban(subject_id: str, title: str, state: str) -> IndexedHistoryEntry:
     )
 
 
-def weread(book_id: str, title: str, *, finished: bool = False) -> IndexedWeReadShelfBook:
+def weread(
+    book_id: str,
+    title: str,
+    *,
+    finished: bool = False,
+    read_update_time: int | None = None,
+) -> IndexedWeReadShelfBook:
     return IndexedWeReadShelfBook(
         book_id=book_id,
         title=title,
@@ -24,7 +30,7 @@ def weread(book_id: str, title: str, *, finished: bool = False) -> IndexedWeRead
         deep_link=None,
         category=None,
         finish_reading=finished,
-        read_update_time=None,
+        read_update_time=read_update_time,
         secret=False,
         title_key="unused",
         last_seen_at="2026-08-20T00:00:00+00:00",
@@ -39,17 +45,51 @@ class ShelfPreviewTests(unittest.TestCase):
         )
 
         self.assertEqual(report.shared_title_keys, 1)
+        self.assertEqual(report.active_shared_title_keys, 0)
         self.assertEqual(report.douban_entries_with_exact_title, 1)
+        self.assertEqual(report.active_douban_entries_with_exact_title, 0)
         self.assertEqual(report.weread_books_with_exact_title, 1)
         self.assertEqual([item.subject_id for item in report.douban_only_entries], ["2"])
+        self.assertEqual([item.subject_id for item in report.active_douban_only_entries], ["2"])
         self.assertEqual([item.book_id for item in report.weread_only_books], ["20"])
+        self.assertEqual([item.book_id for item in report.read_history_overlap_books], ["10"])
+
+    def test_read_history_absence_from_shelf_is_not_active_sync_gap(self) -> None:
+        report = build_shelf_preview(
+            [
+                douban("1", "过去读过", "collect"),
+                douban("2", "现在想读", "wish"),
+                douban("3", "正在读", "do"),
+            ],
+            [],
+        )
+
+        self.assertEqual(report.douban_wish, 1)
+        self.assertEqual(report.douban_reading, 1)
+        self.assertEqual(report.douban_read, 1)
+        self.assertEqual(len(report.douban_only_entries), 3)
+        self.assertEqual(
+            [item.subject_id for item in report.active_douban_only_entries],
+            ["2", "3"],
+        )
+
+    def test_weread_book_matching_douban_read_history_is_not_weread_only(self) -> None:
+        report = build_shelf_preview(
+            [douban("1", "已经读过", "collect")],
+            [weread("10", "已经读过")],
+        )
+
+        self.assertEqual(report.weread_only_books, ())
+        self.assertEqual([item.book_id for item in report.read_history_overlap_books], ["10"])
 
     def test_finished_weread_singleton_flags_possible_douban_state_conflict(self) -> None:
         report = build_shelf_preview(
             [douban("1", "同一本书", "wish")],
-            [weread("10", "同一本书", finished=True)],
+            [weread("10", "同一本书", finished=True, read_update_time=123)],
         )
 
+        self.assertEqual(report.weread_finished, 1)
+        self.assertEqual(report.weread_with_read_activity, 1)
         self.assertEqual(len(report.possible_state_conflicts), 1)
         conflict = report.possible_state_conflicts[0]
         self.assertEqual(conflict.douban_subject_id, "1")
@@ -64,6 +104,7 @@ class ShelfPreviewTests(unittest.TestCase):
 
         self.assertEqual(report.ambiguous_shared_title_keys, 1)
         self.assertEqual(report.douban_entries_with_exact_title, 2)
+        self.assertEqual(report.active_douban_entries_with_exact_title, 1)
         self.assertEqual(report.weread_books_with_exact_title, 1)
         self.assertEqual(report.possible_state_conflicts, ())
 
