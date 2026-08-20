@@ -1,6 +1,6 @@
 # Work-Level Reading-State Reconciliation
 
-Status: **history-aware reconciliation implemented; local regression rerun and live read-only validation pending on this branch**.
+Status: **history-aware reconciliation implemented, regression-tested, and live-validated for the forgotten-history safety path**.
 
 ## Why this layer exists
 
@@ -75,7 +75,7 @@ Only a candidate that survives full same-Work verification contributes a `WorkSt
 
 ## Complete-baseline requirement
 
-`inspect` and confirmed `wish` now require a complete, current-schema local history baseline.
+`inspect` and confirmed `wish` require a complete, current-schema local history baseline.
 
 If the baseline is missing or invalidated, reconciliation fails closed with an instruction to run:
 
@@ -99,7 +99,7 @@ Inspect same-Work state history without writing:
 douban-weread inspect --subject 25837854 --limit 20
 ```
 
-The default live candidate limit is now 20.
+The default live candidate limit is 20.
 
 The state-changing path is:
 
@@ -132,7 +132,7 @@ After a verified write succeeds, the local history index is updated immediately 
 
 ## Reading History Index validation — 2026-08-19
 
-The prerequisite local history foundation has already been live-validated on the stacked base branch:
+The prerequisite local history foundation was live-validated on the stacked base branch:
 
 ```text
 Ran 98 tests in 0.066s
@@ -158,19 +158,53 @@ After Cookie removal, local positive lookups returned:
 
 PIT-020 through PIT-022 document the parser and candidate-quality failures found during that validation.
 
-## Current branch validation target
+## History-aware reconciliation validation — 2026-08-20
 
-The history-aware reconciliation branch adds regression coverage for:
+The full branch regression suite passed:
 
-- a same-Work historical Edition that is absent from live title-search results;
-- incomplete local baseline → fail closed;
-- historical `READ` surviving a weaker current `NONE` read;
-- a current `READ` upgrade overriding an older local `WISH` snapshot;
-- CLI `inspect` refusing an incomplete baseline;
-- confirmed `wish` updating the local SQLite state only after write verification succeeds;
-- `inspect` / `wish` using 20 live candidates instead of the previous hidden 10-candidate write gate.
+```text
+Ran 103 tests in 0.240s
+OK
+```
 
-A real state-changing `wish` remains intentionally deferred. The next validation should first rerun the full local suite, then perform a read-only `inspect` against a target whose same Work is present in the validated local history baseline.
+After the temporary provider-access event recorded as PIT-023 recovered, the live validation used target subject `27112607` (`白夜行`, 刘姿君, 南海出版公司, 2017-07, ISBN `9787544291163`).
+
+A direct resolver check confirmed historical subject `10554308` is the same Work but an alternative Edition:
+
+```text
+TARGET: 白夜行 ['刘姿君'] 南海出版公司 2017-07 9787544291163
+HISTORY: 白夜行 ['刘姿君'] 南海出版公司 2013-01 9787544258609
+same_work: True
+kind: alternative_edition
+requires_confirmation: False
+differences: ['ISBN differs', 'publication year differs'] []
+```
+
+The read-only inspection intentionally constrained live title discovery to one candidate:
+
+```bash
+douban-weread inspect --subject 27112607 --limit 1
+```
+
+Observed records:
+
+```text
+NONE [target] | subject 27112607 | 刘姿君 · 南海出版公司 · 2017-07 · 9787544291163
+READ | subject 10554308 | 刘姿君 · 南海出版公司 · 2013-01 · 9787544258609
+READ | subject 3259440 | 刘姿君 · 南海出版公司 · 2008-09 · 9787544242516
+```
+
+Observed decision:
+
+```text
+Decision: ask_reread
+Safe to write Want-to-Read: False
+Requires user decision: True
+```
+
+This demonstrates the intended safety property: a currently unmarked target Edition is not considered safe to mark Want-to-Read when other same-Work Editions exist in the complete local history as `READ`. The historical subjects were supplied by the local index despite the deliberately tiny live-search bound, then resolved to full Edition metadata and verified as the same Work before affecting the decision.
+
+No state-changing Douban write was performed in this validation.
 
 ## Known boundary
 
