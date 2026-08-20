@@ -64,6 +64,8 @@ class WeReadShelfVerifyCliTests(unittest.TestCase):
         self.shelf.replace_full(
             WeReadShelfSnapshot(
                 books=(WeReadShelfBook(book_id="10", title="同一本书", author="作者"),),
+                album_count=0,
+                has_mp=False,
             )
         )
         weread = FakeWeRead()
@@ -96,7 +98,9 @@ class WeReadShelfVerifyCliTests(unittest.TestCase):
         self.assertEqual(stderr.getvalue(), "")
 
     def test_verify_missing_local_shelf_book_stops_before_network(self) -> None:
-        self.shelf.replace_full(WeReadShelfSnapshot(books=()))
+        self.shelf.replace_full(
+            WeReadShelfSnapshot(books=(), album_count=0, has_mp=False)
+        )
 
         class NoNetworkWeRead(FakeWeRead):
             def get_book(self, book_id: str) -> Edition | None:
