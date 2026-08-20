@@ -242,6 +242,21 @@ class ReadingHistoryIndex:
             ).fetchone()
         return self._row_to_entry(row) if row else None
 
+    def all_entries(self) -> list[IndexedHistoryEntry]:
+        """Return the complete local Douban baseline without network access."""
+        if not self.path.exists():
+            return []
+        self.initialize()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT subject_id, title, state, title_key, last_seen_at
+                FROM history_entries
+                ORDER BY title_key, subject_id
+                """
+            ).fetchall()
+        return [self._row_to_entry(row) for row in rows]
+
     def find_title_candidates(
         self,
         title: str,
