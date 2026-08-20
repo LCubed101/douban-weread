@@ -27,6 +27,7 @@ from douban_weread.storage import (
     ReadingHistoryIndex,
     WeReadShelfIndex,
     WeReadShelfIndexStatus,
+    normalize_history_title,
 )
 
 
@@ -149,6 +150,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum examples shown for each candidate/conflict section (default: 10).",
     )
 
+    queue = subparsers.add_parser(
+        "queue",
+        help="List local candidates for later bounded verification without making network requests.",
+        description=(
+            "Local-only reconciliation queue. It turns title-only misses from the complete baselines into a "
+            "deterministic work list. Queue membership is not Work/Edition verification and never authorizes a write."
+        ),
+    )
+    queue.add_argument(
+        "--direction",
+        choices=("both", "weread-to-douban", "douban-to-weread"),
+        default="both",
+        help="Which local candidate queue to show (default: both).",
+    )
+    queue.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Maximum candidates shown per direction (default: 10).",
+    )
+
     verify = subparsers.add_parser(
         "verify",
         help="Lazily verify one shelf book against bounded Douban Work/Edition and reading-state evidence.",
@@ -199,6 +221,22 @@ def format_lookup_candidate(item: IndexedWeReadShelfBook) -> str:
     if item.secret:
         details.append("private")
     return " | ".join(details)
+
+
+def _load_complete_preview(
+    shelf_index: ShelfIndex,
+    history_index: HistoryIndex,
+):
+    shelf_status = shelf_index.status()
+    history_status = history_index.status()
+    if not shelf_status.complete or not history_status.complete:
+        raise IncompleteShelfVerificationBaselineError(
+            "Both complete baselines are required. Sync Douban history and WeRead shelf first."
+        )
+    return build_shelf_preview(
+        history_index.all_entries(),
+        shelf_index.all_books(),
+    )
 
 
 def run(
@@ -272,101 +310,14 @@ def run(
         )
         return EXIT_OK
 
-    if args.shelf_command == "verify":
-        shelf_index = index_factory()
-        history_index = history_index_factory()
-        weread_client = client_factory()
-        douban_client = douban_verification_factory()
-        try:
-            result = verify_shelf_book(
-                args.book_id,
-                shelf_provider=shelf_index,
-                history_provider=history_index,
-                weread_provider=weread_client,
-                douban_provider=douban_client,
-                douban_search_limit=max(1, min(args.douban_limit, 20)),
-                history_candidate_limit=max(1, min(args.history_limit, 30)),
-            )
-        except IncompleteShelfVerificationBaselineError as exc:
-            print(f"Shelf verification unavailable: {exc}", file=stderr)
-            return EXIT_NO_RESULTS
-        except ValueError as exc:
-            print(f"Shelf verification unavailable: {exc}", file=stderr)
-            return EXIT_NO_RESULTS
-        except (WeReadProviderError, DoubanProviderError, OSError, sqlite3.Error) as exc:
-            print(f"Shelf verification provider error: {exc}", file=stderr)
-            return EXIT_PROVIDER_ERROR
-
-        print("Lazy shelf verification:", file=stdout)
-        print("\nWeRead shelf item:", file=stdout)
-        print(f"- {result.weread_edition.title}", file=stdout)
-        if result.weread_edition.authors:
-            print(f"  Authors: {', '.join(result.weread_edition.authors)}", file=stdout)
-        if result.weread_edition.isbn:
-            print(f"  ISBN: {result.weread_edition.isbn}", file=stdout)
-        print(f"  WeRead bookId: {result.shelf_book.book_id}", file=stdout)
-        print(f"  Progress: {result.progress.progress}%", file=stdout)
-        print(f"  Started: {'yes' if result.progress.is_started else 'no'}", file=stdout)
-        print(f"  Verified WeRead state: {result.weread_state.value}", file=stdout)
-
-        print(
-            f"\nResolver-confirmed same-Work Douban candidates: {len(result.verified_douban_candidates)}",
-            file=stdout,
-        )
-        if result.best_match is not None:
-            best = result.best_match
-            print("Best verified Douban candidate:", file=stdout)
-            print(f"- {best.edition.title}", file=stdout)
-            print(f"  Douban subject: {best.edition.douban_id}", file=stdout)
-            if best.edition.isbn:
-                print(f"  ISBN: {best.edition.isbn}", file=stdout)
-            print(f"  Match: {best.match.kind.value}", file=stdout)
-            print(f"  Exact Edition: {best.match.exact_edition}", file=stdout)
-            print(f"  Local history state: {best.history_state.value}", file=stdout)
-            if best.match.reasons:
-                print(f"  Reasons: {'; '.join(best.match.reasons)}", file=stdout)
-        else:
-            print(
-                "No resolver-confirmed same-Work Douban candidate was found within this bounded verification window.",
-                file=stdout,
-            )
-
-        print(
-            f"Strongest verified Douban Work state in local baseline: {result.strongest_douban_state.value}",
-            file=stdout,
-        )
-        print("\nRecommendation:", file=stdout)
-        print(f"Action: {result.decision.action.value}", file=stdout)
-        print(f"Suggested Douban state: {result.decision.suggested_douban_state.value}", file=stdout)
-        print(f"Safe to auto apply: {result.decision.safe_to_auto_apply}", file=stdout)
-        print(f"Requires user decision: {result.decision.requires_user_decision}", file=stdout)
-        print(f"Reason: {result.decision.reason}", file=stdout)
-        print(
-            "\nBounded evidence: "
-            f"public Douban search <= {result.douban_search_limit} candidates; "
-            f"local history shortlist <= {result.history_candidate_limit}. "
-            "This is not an exhaustive proof that no other Douban Edition exists.",
-            file=stdout,
-        )
-        print("No mutation is performed by this command.", file=stdout)
-        return EXIT_OK
-
     if args.shelf_command == "preview":
         shelf_index = index_factory()
         history_index = history_index_factory()
         try:
-            shelf_status = shelf_index.status()
-            history_status = history_index.status()
-            if not shelf_status.complete or not history_status.complete:
-                print(
-                    "Both complete baselines are required. Sync Douban history and WeRead shelf first.",
-                    file=stderr,
-                )
-                return EXIT_NO_RESULTS
-            report = build_shelf_preview(
-                history_index.all_entries(),
-                shelf_index.all_books(),
-            )
+            report = _load_complete_preview(shelf_index, history_index)
+        except IncompleteShelfVerificationBaselineError as exc:
+            print(str(exc), file=stderr)
+            return EXIT_NO_RESULTS
         except (OSError, sqlite3.Error, ValueError) as exc:
             print(f"Local reconciliation preview error: {exc}", file=stderr)
             return EXIT_PROVIDER_ERROR
@@ -435,6 +386,146 @@ def run(
             "No mutation is authorized by this report.",
             file=stdout,
         )
+        return EXIT_OK
+
+    if args.shelf_command == "queue":
+        shelf_index = index_factory()
+        history_index = history_index_factory()
+        try:
+            report = _load_complete_preview(shelf_index, history_index)
+        except IncompleteShelfVerificationBaselineError as exc:
+            print(str(exc), file=stderr)
+            return EXIT_NO_RESULTS
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            print(f"Local reconciliation queue error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+
+        item_limit = max(1, min(args.limit, 100))
+        print("Local reconciliation verification queue:", file=stdout)
+
+        if args.direction in {"both", "weread-to-douban"}:
+            weread_queue = sorted(
+                report.weread_only_books,
+                key=lambda book: (normalize_history_title(book.title), book.book_id),
+            )
+            print(
+                f"\nWeRead → Douban candidates: {len(weread_queue)} "
+                "(no exact-title match in any local Douban history state)",
+                file=stdout,
+            )
+            for book in weread_queue[:item_limit]:
+                details = [f"bookId {book.book_id}", book.title]
+                if book.author:
+                    details.append(book.author)
+                if book.secret:
+                    details.append("private")
+                print(f"- {' | '.join(details)}", file=stdout)
+                print(
+                    f"  next: douban-weread weread shelf verify --id {book.book_id}",
+                    file=stdout,
+                )
+
+        if args.direction in {"both", "douban-to-weread"}:
+            douban_queue = sorted(
+                report.active_douban_only_entries,
+                key=lambda entry: (normalize_history_title(entry.title), entry.subject_id),
+            )
+            print(
+                f"\nDouban → WeRead candidates: {len(douban_queue)} "
+                "(active intent with no exact-title current-shelf match)",
+                file=stdout,
+            )
+            for entry in douban_queue[:item_limit]:
+                print(
+                    f"- subject {entry.subject_id} | {entry.title} | state: {entry.state}",
+                    file=stdout,
+                )
+                print(
+                    f"  next: douban-weread weread resolve --subject {entry.subject_id} --limit 5",
+                    file=stdout,
+                )
+
+        print(
+            "\nQueue only: this command is local-only and makes no network requests. "
+            "Title-only misses are work items, not proof of missing Work/Edition identity or catalog availability. "
+            "No mutation is authorized.",
+            file=stdout,
+        )
+        return EXIT_OK
+
+    if args.shelf_command == "verify":
+        shelf_index = index_factory()
+        history_index = history_index_factory()
+        try:
+            result = verify_shelf_book(
+                args.book_id,
+                shelf_provider=shelf_index,
+                history_provider=history_index,
+                weread_provider=client_factory(),
+                douban_provider=douban_verification_factory(),
+                douban_search_limit=max(1, min(args.douban_limit, 20)),
+                history_candidate_limit=max(1, min(args.history_limit, 30)),
+            )
+        except IncompleteShelfVerificationBaselineError as exc:
+            print(str(exc), file=stderr)
+            return EXIT_NO_RESULTS
+        except DoubanProviderError as exc:
+            print(f"Douban provider error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+        except WeReadProviderError as exc:
+            print(f"WeRead provider error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            print(f"Lazy shelf verification error: {exc}", file=stderr)
+            return EXIT_NO_RESULTS
+
+        print("Lazy shelf verification:", file=stdout)
+        print("\nWeRead shelf item:", file=stdout)
+        print(f"- {result.weread_edition.title}", file=stdout)
+        if result.weread_edition.authors:
+            print(f"  Authors: {', '.join(result.weread_edition.authors)}", file=stdout)
+        if result.weread_edition.isbn:
+            print(f"  ISBN: {result.weread_edition.isbn}", file=stdout)
+        print(f"  WeRead bookId: {result.shelf_book.book_id}", file=stdout)
+        print(f"  Progress: {result.progress.progress}%", file=stdout)
+        print(f"  Started: {'yes' if result.progress.is_started else 'no'}", file=stdout)
+        print(f"  Verified WeRead state: {result.weread_state.value}", file=stdout)
+
+        print(
+            f"\nResolver-confirmed same-Work Douban candidates: {len(result.verified_douban_candidates)}",
+            file=stdout,
+        )
+        if result.best_match is not None:
+            best = result.best_match
+            print("\nBest verified Douban candidate:", file=stdout)
+            print(f"- {best.edition.title}", file=stdout)
+            if best.edition.douban_id:
+                print(f"  Douban subject: {best.edition.douban_id}", file=stdout)
+            if best.edition.isbn:
+                print(f"  ISBN: {best.edition.isbn}", file=stdout)
+            print(f"  Match: {best.match.kind.value}", file=stdout)
+            print(f"  Exact Edition: {best.match.exact_edition}", file=stdout)
+            print(f"  Local history state: {best.history_state.value}", file=stdout)
+            if best.match.reasons:
+                print(f"  Reasons: {'; '.join(best.match.reasons)}", file=stdout)
+
+        print(
+            f"\nStrongest verified Douban Work state in local baseline: {result.strongest_douban_state.value}",
+            file=stdout,
+        )
+        print("\nRecommendation:", file=stdout)
+        print(f"Action: {result.decision.action.value}", file=stdout)
+        print(f"Suggested Douban state: {result.decision.suggested_douban_state.value}", file=stdout)
+        print(f"Safe to auto apply: {result.decision.safe_to_auto_apply}", file=stdout)
+        print(f"Requires user decision: {result.decision.requires_user_decision}", file=stdout)
+        print(f"Reason: {result.decision.reason}", file=stdout)
+        print(
+            f"\nBounded evidence: public Douban search <= {result.douban_search_limit} candidates; "
+            f"local history shortlist <= {result.history_candidate_limit}. "
+            "This is not an exhaustive proof that no other Douban Edition exists.",
+            file=stdout,
+        )
+        print("\nNo mutation is performed by this command.", file=stdout)
         return EXIT_OK
 
     parser.error(f"unsupported WeRead shelf command: {args.shelf_command}")
