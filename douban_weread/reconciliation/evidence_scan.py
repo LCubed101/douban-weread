@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Protocol, Sequence
-
-from douban_weread.providers.weread import WeReadProgress, WeReadSearchCandidate
-from douban_weread.core.models import Edition
-from douban_weread.storage import ReconciliationEvidence
+from typing import Callable, Sequence
 
 from .shelf_batch import (
     DOUBAN_TO_WEREAD,
@@ -14,7 +10,6 @@ from .shelf_batch import (
     DoubanBatchProvider,
     EvidenceProvider,
     HistoryProvider,
-    ReconciliationBatchResult,
     ShelfProvider,
     WeReadBatchProvider,
     run_reconciliation_batch,
