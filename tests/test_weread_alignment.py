@@ -96,6 +96,49 @@ class WeReadAlignmentTests(unittest.TestCase):
         self.assertFalse(result.match.exact_edition)
         self.assertEqual(result.intent.selected_edition.weread_id, "old")
 
+    def test_first_volume_variant_is_available_alternative_and_requires_confirmation(self) -> None:
+        source = Edition(
+            title="三体",
+            authors=["刘慈欣"],
+            publisher="重庆出版社",
+            publish_date="2008-01",
+            isbn="9787536692930",
+            douban_id="2567698",
+        )
+        client = FakeCatalogClient(
+            [
+                WeReadSearchCandidate(book_id="set", title="三体全集（全三册）", soldout=False),
+                WeReadSearchCandidate(book_id="178677", title="三体1", soldout=False),
+            ],
+            {
+                "set": Edition(
+                    title="三体全集（全三册）",
+                    authors=["刘慈欣"],
+                    weread_id="set",
+                ),
+                "178677": Edition(
+                    title="三体1",
+                    authors=["刘慈欣"],
+                    publisher="重庆出版社",
+                    publish_date="2022-04-01",
+                    isbn="9787229166922",
+                    weread_id="178677",
+                ),
+            },
+        )
+
+        result = align_to_weread(source, client, limit=10)
+
+        self.assertEqual(result.intent.weread_status, WeReadStatus.AVAILABLE_ALTERNATIVE)
+        self.assertEqual(result.intent.resolution, EditionResolution.ALTERNATIVE_EDITION)
+        self.assertEqual(result.intent.selected_edition.weread_id, "178677")
+        self.assertIsNotNone(result.match)
+        assert result.match is not None
+        self.assertTrue(result.match.same_work)
+        self.assertTrue(result.match.requires_confirmation)
+        self.assertIn("first-volume title variant", result.match.reasons)
+        self.assertEqual(client.book_calls, ["set", "178677"])
+
     def test_soldout_same_work_is_unavailable_not_not_found(self) -> None:
         client = FakeCatalogClient(
             [WeReadSearchCandidate(book_id="230107", title="白夜行", soldout=True)],
