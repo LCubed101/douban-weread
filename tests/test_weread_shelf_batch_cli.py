@@ -87,6 +87,8 @@ class WeReadShelfBatchCliTests(unittest.TestCase):
         self.assertIn("Direction: weread-to-douban", output)
         self.assertIn("Outcome: suggest_wish", output)
         self.assertIn("Suggested Douban state: wish", output)
+        self.assertIn("User plan: suggest_douban_wish", output)
+        self.assertIn("User action required: yes", output)
         self.assertIn("Checkpointed for this baseline: yes", output)
         self.assertIn("Remaining pending for this generation: 0", output)
         self.assertEqual(weread.calls, [("book", "10"), ("progress", "10")])
