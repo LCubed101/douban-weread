@@ -5,12 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from douban_weread.providers.douban.history import HistoryEntry
 from douban_weread.providers.weread import (
     WeReadProviderError,
     WeReadShelfBook,
     WeReadShelfSnapshot,
 )
-from douban_weread.storage import WeReadShelfIndex
+from douban_weread.storage import ReadingHistoryIndex, WeReadShelfIndex
 from douban_weread.weread_shelf_cli import EXIT_NO_RESULTS, EXIT_OK, EXIT_PROVIDER_ERROR, run
 
 
@@ -34,6 +35,7 @@ class WeReadShelfCliTests(unittest.TestCase):
         self.addCleanup(self.tempdir.cleanup)
         self.path = Path(self.tempdir.name) / "history.sqlite3"
         self.index = WeReadShelfIndex(self.path)
+        self.history = ReadingHistoryIndex(self.path)
         self.snapshot = WeReadShelfSnapshot(
             books=(
                 WeReadShelfBook(
@@ -146,6 +148,52 @@ class WeReadShelfCliTests(unittest.TestCase):
         self.assertEqual(code, EXIT_PROVIDER_ERROR)
         self.assertFalse(self.index.status().complete)
         self.assertIn("WeRead shelf sync error: gateway unavailable", stderr.getvalue())
+
+    def test_preview_reads_both_complete_local_baselines_without_network(self) -> None:
+        self.index.replace_full(self.snapshot)
+        self.history.replace_full(
+            [
+                HistoryEntry("1", "白夜行", "collect"),
+                HistoryEntry("2", "豆瓣独有", "wish"),
+                HistoryEntry("3", "已读完的书", "wish"),
+            ]
+        )
+        stdout = io.StringIO()
+
+        code = run(
+            ["preview", "--limit", "5"],
+            client_factory=lambda: (_ for _ in ()).throw(AssertionError("client should not be created")),
+            index_factory=lambda: self.index,
+            history_index_factory=lambda: self.history,
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+
+        self.assertEqual(code, EXIT_OK)
+        output = stdout.getvalue()
+        self.assertIn("Local two-sided reconciliation preview", output)
+        self.assertIn("Douban history entries: 3", output)
+        self.assertIn("WeRead electronic shelf books: 2", output)
+        self.assertIn("Shared exact normalized title keys: 2", output)
+        self.assertIn("Douban-only by exact title: 1", output)
+        self.assertIn("WeRead-only by exact title: 0", output)
+        self.assertIn("Possible finished/state conflicts: 1", output)
+        self.assertIn("No mutation is authorized", output)
+
+    def test_preview_requires_both_complete_baselines(self) -> None:
+        self.index.replace_full(self.snapshot)
+        stderr = io.StringIO()
+
+        code = run(
+            ["preview"],
+            index_factory=lambda: self.index,
+            history_index_factory=lambda: self.history,
+            stdout=io.StringIO(),
+            stderr=stderr,
+        )
+
+        self.assertEqual(code, EXIT_NO_RESULTS)
+        self.assertIn("Both complete baselines are required", stderr.getvalue())
 
 
 if __name__ == "__main__":
