@@ -19,6 +19,7 @@ from douban_weread.reconciliation.shelf_verify import IncompleteShelfVerificatio
 from douban_weread.storage import (
     ReadingHistoryIndex,
     ReconciliationCheckpointStore,
+    ReconciliationEvidenceStore,
     WeReadShelfIndex,
 )
 
@@ -90,12 +91,20 @@ def run(
     args = build_parser().parse_args(list(argv) if argv is not None else None)
 
     try:
+        checkpoint_store = checkpoint_factory()
+        checkpoint_path = getattr(checkpoint_store, "path", None)
+        evidence_store = (
+            ReconciliationEvidenceStore(checkpoint_path)
+            if checkpoint_path is not None
+            else None
+        )
         result = run_reconciliation_batch(
             args.direction,
             limit=args.limit,
             shelf_provider=shelf_index_factory(),
             history_provider=history_index_factory(),
-            checkpoint_provider=checkpoint_factory(),
+            checkpoint_provider=checkpoint_store,
+            evidence_provider=evidence_store,
             weread_provider=weread_client_factory(),
             douban_provider=douban_client_factory(),
             douban_search_limit=max(1, min(args.douban_limit, 20)),
@@ -200,7 +209,7 @@ def run(
     print(f"\nProcessed this batch: {len(result.processed)}", file=stdout)
     print(f"Remaining pending for this generation: {result.remaining_after}", file=stdout)
     print(
-        "No mutation is performed. Checkpoints only prevent repeated verification against the same baselines and reconciliation policy version.",
+        "No mutation is performed. Verified normalized evidence is persisted locally before each checkpoint; checkpoints prevent repeated verification against the same baselines and reconciliation policy version.",
         file=stdout,
     )
     return EXIT_OK
