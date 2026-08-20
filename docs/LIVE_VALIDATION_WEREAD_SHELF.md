@@ -93,7 +93,39 @@ This preview is title-only and does not establish Work or Edition identity.
 
 The result also exposed an important semantic bug in the first report: `Douban-only` included historical `collect` / READ records. A book that was read in the past is not expected to remain on the current WeRead shelf, so such an absence is not a synchronization gap.
 
-The preview semantics were therefore revised before any automatic synchronization logic was added:
+## Revised active-intent preview
+
+After the preview semantics were corrected, the full local suite passed:
+
+```text
+Ran 157 tests in 0.090s
+OK
+```
+
+Observed revised preview:
+
+```text
+Douban history entries: 1748
+  Active intents (wish + reading): 1552
+    Want-to-Read: 1512
+    Reading: 40
+  Read history (not expected on current shelf): 196
+
+WeRead electronic shelf books: 302
+  Shelf books marked finished: 15
+  Shelf books with nonzero readUpdateTime: 302
+
+Shared exact normalized title keys (all Douban states): 133
+Shared title keys involving active Douban intent: 111
+Active Douban entries with exact-title shelf candidate: 115
+Active Douban-only by exact title: 1437
+WeRead-only vs any Douban state by exact title: 169
+WeRead shelf books overlapping Douban READ history by exact title: 22
+Ambiguous shared title keys: 4
+Possible finished/state conflicts: 0
+```
+
+This establishes the correct first-pass business scope:
 
 ```text
 Douban WISH / READING
@@ -104,17 +136,90 @@ Douban READ
 
 WeRead shelf presence
 → not equivalent to Douban WISH
-
-WeRead finishReading / later /book/getprogress
-→ reading-state evidence
 ```
 
-The revised active-intent preview is implemented and awaits the next local regression + real local preview run.
+The `1437` active Douban entries without an exact-title shelf candidate are not automatically sync failures. They still contain several unresolved classes: different title, different Edition, no WeRead shelf membership, or no WeRead catalog availability.
+
+Likewise, the `169` WeRead-only exact-title misses are high-priority reconciliation candidates, not proof that Douban lacks the Work.
+
+## Live `/book/getprogress`: `readUpdateTime` is not reading-state evidence
+
+After official `/book/getprogress` support was added, the full local suite passed:
+
+```text
+Ran 163 tests in 0.092s
+OK
+```
+
+A live read-only progress lookup was executed for a WeRead shelf-only title candidate:
+
+```text
+bookId: 37724838
+Title: 一个无政府主义者的意外死亡
+```
+
+Observed official progress evidence:
+
+```text
+WeRead bookId: 37724838
+Progress: 0%
+Started: no
+Coarse state: unread
+Last reading update: 1633955344
+Recorded reading time: 0 seconds
+```
+
+This is decisive evidence that `readUpdateTime` from the shelf/progress payload must not be interpreted as "the user has started reading". The book has a nonzero update timestamp while official progress is 0%, `isStartReading` is false, and recorded reading time is zero.
+
+The project therefore uses `/book/getprogress` as the reading-state authority for lazy verification:
+
+```text
+progress = 0 and isStartReading = false
+→ UNREAD
+
+progress = 1..99, or started evidence
+→ READING
+
+progress = 100 and finishTime present
+→ READ
+
+inconsistent / unsupported combination
+→ UNKNOWN / fail closed
+```
+
+`readUpdateTime` remains metadata only and is not a state-transition signal.
+
+## State synchronization policy boundary
+
+Cross-platform state recommendation is now separated from identity resolution:
+
+```text
+Work/Edition resolver
+        ↓
+verified Work identity
+        ↓
+/book/getprogress
+        ↓
+UNREAD / READING / READ / UNKNOWN
+        ↓
+conservative Douban state recommendation
+```
+
+The first policy is intentionally suggestion-only:
+
+- WeRead UNREAD + Douban NONE → suggest WISH, but do not auto-apply.
+- WeRead READING + Douban NONE/WISH → suggest READING, but do not auto-apply.
+- WeRead READ + Douban NONE/WISH/READING → suggest READ, but do not auto-apply.
+- Douban READ + WeRead READING → possible reread; ask rather than downgrade READ.
+- Unknown identity or state → fail closed.
+- Same Work but non-exact Edition can support a Work-level suggestion, but Edition choice must be reviewed before a concrete Edition write.
+
+No cross-platform state-changing action is auto-applied in v0.2.
 
 ## Safety boundary
 
 - No WeRead mutation was performed.
-- No Douban mutation was performed.
+- No Douban mutation was performed in this shelf milestone.
 - Exact normalized title overlap is shortlist evidence only.
 - Full `/book/info` and `/book/getprogress` should be fetched lazily only for candidates that require Work/Edition or reading-state verification.
 - Do not fan out detail requests across the full 302-book shelf merely to build a baseline.
