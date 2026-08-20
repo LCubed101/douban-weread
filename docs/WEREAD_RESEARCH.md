@@ -1,6 +1,6 @@
 # WeRead search / availability research
 
-Status: **technical reconnaissance complete; official-provider implementation landed; local regression and live validation pending**.
+Status: **technical reconnaissance complete; official-provider implementation and read-only CLI landed; 123 local tests passing; live validation pending**.
 
 Date: 2026-08-20
 
@@ -180,6 +180,16 @@ class WeReadClient:
 
 The transport is injectable for tests. API transport and response parsing stay inside the provider; the existing resolver remains provider-agnostic.
 
+## Read-only CLI implemented
+
+The project command now exposes a WeRead namespace through the top-level dispatcher:
+
+```bash
+douban-weread weread search "白夜行" --limit 5
+```
+
+The command performs read-only search and prints lightweight candidate metadata only. It does not infer `AVAILABLE_EXACT` or `AVAILABLE_ALTERNATIVE` from search hits alone; full `/book/info` metadata and resolver comparison are still required before those states may be assigned.
+
 ## Error / safety boundary
 
 - `WEREAD_API_KEY` is supplied locally only.
@@ -190,9 +200,9 @@ The transport is injectable for tests. API transport and response parsing stay i
 - No WeRead write operation is needed for v0.2.
 - Do not reverse-engineer browser cookies or reader-content signatures for this search/status milestone while the official API covers the required read-only metadata.
 
-## Regression coverage added
+## Regression coverage and local validation
 
-`tests/test_weread.py` now covers:
+`tests/test_weread.py` covers:
 
 - missing / malformed API key fail-before-network behavior;
 - explicit `scope=10` request construction;
@@ -207,14 +217,31 @@ The transport is injectable for tests. API transport and response parsing stay i
 - `upgrade_info` fail-closed behavior;
 - invalid JSON and non-2xx responses.
 
-The full repository suite still needs to be rerun locally after these commits.
+Additional CLI / dispatch tests cover the `weread search` command and top-level command routing.
 
-## Remaining implementation milestone
+The full local repository suite was rerun after the provider and CLI commits:
 
-1. Run the full local regression suite.
-2. Add a small read-only CLI surface after provider tests are green.
-3. Obtain `WEREAD_API_KEY` locally and run one low-volume live search.
-4. Fetch `/book/info` for one returned `bookId` and compare it with a known Douban Edition through the existing resolver.
+```text
+Ran 123 tests in 0.060s
+OK
+```
+
+The editable package was then reinstalled and the installed console entry point was verified locally:
+
+```text
+usage: douban-weread weread [-h] {search} ...
+
+Read-only WeRead search through Tencent's official Agent API.
+```
+
+No live WeRead request was made during this validation.
+
+## Remaining milestone
+
+1. Obtain `WEREAD_API_KEY` locally from the official WeRead Skills page.
+2. Run one low-volume live `weread search` query.
+3. Fetch `/book/info` for one returned `bookId` and compare it with a known Douban Edition through the existing resolver.
+4. Verify whether `soldout=0` is consistent with an actually openable/readable WeRead listing.
 5. Only after live evidence confirms the semantics, wire `AVAILABLE_EXACT` / `AVAILABLE_ALTERNATIVE` into the cross-platform `ReadingIntent` flow.
 
 ## Live validation target
