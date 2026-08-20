@@ -11,6 +11,7 @@ from douban_weread.core.models import Edition
 from douban_weread.providers.douban import DoubanBookSearchClient, DoubanProviderError
 from douban_weread.providers.weread import (
     WeReadClient,
+    WeReadProgress,
     WeReadProviderError,
     WeReadSearchCandidate,
 )
@@ -26,6 +27,8 @@ class WeReadSearchClient(Protocol):
     def search_books(self, keyword: str, *, count: int = 10) -> list[WeReadSearchCandidate]: ...
 
     def get_book(self, book_id: str) -> Edition | None: ...
+
+    def get_progress(self, book_id: str) -> WeReadProgress | None: ...
 
 
 class DoubanEditionClient(Protocol):
@@ -43,7 +46,7 @@ def _default_client() -> WeReadClient:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="douban-weread weread",
-        description="Read-only WeRead search, metadata lookup, Edition comparison, and alignment.",
+        description="Read-only WeRead search, metadata lookup, progress, Edition comparison, and alignment.",
     )
     subparsers = parser.add_subparsers(dest="weread_command", required=True)
 
@@ -72,6 +75,16 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     book.add_argument("--id", required=True, dest="book_id", help="Exact WeRead bookId to inspect.")
+
+    progress = subparsers.add_parser(
+        "progress",
+        help="Fetch official reading progress for one exact WeRead bookId.",
+        description=(
+            "Read-only /book/getprogress lookup. The coarse state is intentionally conservative: "
+            "progress=100 is treated as read only when finishTime is also present."
+        ),
+    )
+    progress.add_argument("--id", required=True, dest="book_id", help="Exact WeRead bookId to inspect.")
 
     compare = subparsers.add_parser(
         "compare",
@@ -138,6 +151,22 @@ def format_book(edition: Edition) -> str:
     return "\n".join(lines)
 
 
+def format_progress(progress: WeReadProgress) -> str:
+    lines = [
+        f"WeRead bookId: {progress.book_id}",
+        f"Progress: {progress.progress}%",
+        f"Started: {'yes' if progress.is_started else 'no'}",
+        f"Coarse state: {progress.reading_state}",
+    ]
+    if progress.update_time is not None:
+        lines.append(f"Last reading update: {progress.update_time}")
+    if progress.reading_time_seconds is not None:
+        lines.append(f"Recorded reading time: {progress.reading_time_seconds} seconds")
+    if progress.finish_time is not None:
+        lines.append(f"Finish time: {progress.finish_time}")
+    return "\n".join(lines)
+
+
 def run(
     argv: Sequence[str] | None = None,
     *,
@@ -191,6 +220,26 @@ def run(
         print(format_book(edition), file=stdout)
         print(
             "\nMetadata is normalized for Edition comparison; availability classification still requires resolver evidence.",
+            file=stdout,
+        )
+        return EXIT_OK
+
+    if args.weread_command == "progress":
+        client = client_factory()
+        try:
+            progress = client.get_progress(args.book_id)
+        except (WeReadProviderError, ValueError) as exc:
+            print(f"WeRead provider error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+
+        if progress is None:
+            print(f"No WeRead progress found for bookId {args.book_id}.", file=stdout)
+            return EXIT_NO_RESULTS
+
+        print("WeRead reading progress:\n", file=stdout)
+        print(format_progress(progress), file=stdout)
+        print(
+            "\nProgress is user-specific read-only evidence. It is not used to mutate Douban state by this command.",
             file=stdout,
         )
         return EXIT_OK
