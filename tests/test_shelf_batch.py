@@ -205,12 +205,54 @@ class ShelfBatchTests(unittest.TestCase):
         self.assertEqual(len(result.processed), 1)
         self.assertEqual(result.processed[0].outcome, "available_exact")
         self.assertEqual(result.processed[0].source_state, "wish")
+        self.assertIsNone(result.processed[0].selected_shelf_book)
         completed = self.checkpoints.completed_ids(
             DOUBAN_TO_WEREAD,
             shelf_sync_at="shelf-v1",
             history_sync_at="history-v1",
         )
         self.assertEqual(completed, {"5001"})
+
+    def test_douban_to_weread_detects_resolved_book_already_on_shelf_under_different_title(self) -> None:
+        self.shelf.replace_full(
+            WeReadShelfSnapshot(
+                books=(
+                    WeReadShelfBook(
+                        book_id="9001",
+                        title="待读书（微信版标题）",
+                        author="作者",
+                    ),
+                ),
+                album_count=0,
+                has_mp=False,
+            ),
+            synced_at="shelf-v1",
+        )
+        self.history.replace_full(
+            [HistoryEntry("5001", "待读书", "wish")],
+            synced_at="history-v1",
+        )
+        isbn = "9780000005001"
+        douban = ExactDoubanSearch({"待读书": ("5001", isbn)})
+        weread = DoubanToWeReadFakeWeRead({"待读书": ("9001", isbn)})
+
+        result = run_reconciliation_batch(
+            DOUBAN_TO_WEREAD,
+            limit=1,
+            shelf_provider=self.shelf,
+            history_provider=self.history,
+            checkpoint_provider=self.checkpoints,
+            weread_provider=weread,
+            douban_provider=douban,
+        )
+
+        self.assertEqual(len(result.processed), 1)
+        item = result.processed[0]
+        self.assertEqual(item.outcome, "available_exact")
+        self.assertIsNotNone(item.selected_shelf_book)
+        assert item.selected_shelf_book is not None
+        self.assertEqual(item.selected_shelf_book.book_id, "9001")
+        self.assertEqual(item.selected_shelf_book.title, "待读书（微信版标题）")
 
     def test_new_baseline_generation_makes_item_pending_again(self) -> None:
         metadata = self._sync_weread_only_books(1)
