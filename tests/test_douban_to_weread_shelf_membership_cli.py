@@ -8,7 +8,12 @@ from pathlib import Path
 from douban_weread.core.models import Edition
 from douban_weread.providers.douban.history import HistoryEntry
 from douban_weread.providers.weread import WeReadSearchCandidate, WeReadShelfBook, WeReadShelfSnapshot
-from douban_weread.storage import ReadingHistoryIndex, ReconciliationCheckpointStore, WeReadShelfIndex
+from douban_weread.storage import (
+    ReadingHistoryIndex,
+    ReconciliationCheckpointStore,
+    ReconciliationEvidenceStore,
+    WeReadShelfIndex,
+)
 from douban_weread.weread_shelf_batch_cli import EXIT_OK, run
 
 
@@ -88,6 +93,19 @@ class DoubanToWeReadShelfMembershipCliTests(unittest.TestCase):
         self.assertIn("User plan: add_to_weread_shelf_exact", output)
         self.assertIn("User action required: yes", output)
 
+        evidence = ReconciliationEvidenceStore(self.path).list_generation(
+            "douban-to-weread",
+            shelf_sync_at="shelf-v1",
+            history_sync_at="history-v1",
+            policy_version=3,
+        )
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0].item_id, "5001")
+        self.assertEqual(evidence[0].user_plan, "add_to_weread_shelf_exact")
+        self.assertEqual(evidence[0].selected_weread_book_id, "9001")
+        self.assertEqual(evidence[0].shelf_membership, "no")
+        self.assertTrue(evidence[0].exact_edition)
+
     def test_prints_yes_and_actual_shelf_title_when_book_id_is_already_present(self) -> None:
         self.shelf.replace_full(
             WeReadShelfSnapshot(
@@ -110,6 +128,16 @@ class DoubanToWeReadShelfMembershipCliTests(unittest.TestCase):
         self.assertIn("Current shelf title: 待读书（微信版标题）", output)
         self.assertIn("User plan: aligned", output)
         self.assertIn("User action required: no", output)
+
+        evidence = ReconciliationEvidenceStore(self.path).list_generation(
+            "douban-to-weread",
+            shelf_sync_at="shelf-v1",
+            history_sync_at="history-v1",
+            policy_version=3,
+        )
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0].user_plan, "aligned")
+        self.assertEqual(evidence[0].shelf_membership, "yes")
 
 
 if __name__ == "__main__":
