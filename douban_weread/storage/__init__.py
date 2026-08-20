@@ -16,6 +16,10 @@ from .reconciliation_evidence import (
     ReconciliationEvidenceStore,
     default_reconciliation_evidence_db_path,
 )
+from .reconciliation_worker import (
+    ReconciliationWorkerState,
+    ReconciliationWorkerStateStore,
+)
 from .weread_shelf import (
     IndexedWeReadShelfBook,
     WeReadShelfIndex,
@@ -37,6 +41,8 @@ __all__ = [
     "ReconciliationEvidence",
     "ReconciliationEvidenceStore",
     "default_reconciliation_evidence_db_path",
+    "ReconciliationWorkerState",
+    "ReconciliationWorkerStateStore",
     "IndexedWeReadShelfBook",
     "WeReadShelfIndex",
     "WeReadShelfIndexStatus",
