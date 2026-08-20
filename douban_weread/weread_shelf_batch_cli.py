@@ -166,6 +166,17 @@ def run(
                 print(f"   Selected WeRead bookId: {intent.selected_edition.weread_id}", file=stdout)
                 if intent.selected_edition.title:
                     print(f"   Selected Edition: {intent.selected_edition.title}", file=stdout)
+                if item.selected_shelf_book is not None:
+                    print("   Current shelf membership: yes", file=stdout)
+                    if item.selected_shelf_book.title != intent.selected_edition.title:
+                        print(
+                            f"   Current shelf title: {item.selected_shelf_book.title}",
+                            file=stdout,
+                        )
+                else:
+                    print("   Current shelf membership: no", file=stdout)
+            else:
+                print("   Current shelf membership: unresolved", file=stdout)
             if intent.source_url:
                 print(f"   Deep link: {intent.source_url}", file=stdout)
             print(f"   Outcome: {item.outcome}", file=stdout)
