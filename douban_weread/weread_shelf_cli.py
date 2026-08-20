@@ -244,7 +244,11 @@ def run(
         print(f"  Read history (not expected on current shelf): {report.douban_read}", file=stdout)
         print(f"WeRead electronic shelf books: {report.weread_total}", file=stdout)
         print(f"  Shelf books marked finished: {report.weread_finished}", file=stdout)
-        print(f"  Shelf books with read-activity timestamp: {report.weread_with_read_activity}", file=stdout)
+        print(
+            f"  Shelf books with nonzero readUpdateTime: {report.weread_with_read_activity}",
+            file=stdout,
+        )
+        print("    (not treated as started-reading evidence; use /book/getprogress)", file=stdout)
         print(f"Shared exact normalized title keys (all Douban states): {report.shared_title_keys}", file=stdout)
         print(f"Shared title keys involving active Douban intent: {report.active_shared_title_keys}", file=stdout)
         print(
