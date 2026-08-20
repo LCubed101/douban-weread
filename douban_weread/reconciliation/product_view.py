@@ -81,12 +81,34 @@ class ProductReconciliationView:
     items: tuple[ProductReconciliationItem, ...]
 
     @property
-    def progress_percent(self) -> int | None:
+    def progress_ratio(self) -> float | None:
+        """Precise 0..1 progress for UI progress bars without integer truncation."""
         if self.candidate_total is None or self.verified_total is None:
             return None
         if self.candidate_total == 0:
-            return 100
-        return int((self.verified_total * 100) / self.candidate_total)
+            return 1.0
+        return self.verified_total / self.candidate_total
+
+    @property
+    def progress_percent(self) -> int | None:
+        """Backward-compatible whole-number percent for coarse diagnostics."""
+        ratio = self.progress_ratio
+        if ratio is None:
+            return None
+        return int(ratio * 100)
+
+    @property
+    def progress_label(self) -> str | None:
+        """Human display that never reports 0% after verified work has begun."""
+        ratio = self.progress_ratio
+        if ratio is None:
+            return None
+        percent = ratio * 100
+        if percent == 0:
+            return "0%"
+        if percent < 1:
+            return "<1%"
+        return f"{int(percent)}%"
 
 
 _BUCKET_BY_PLAN = {
