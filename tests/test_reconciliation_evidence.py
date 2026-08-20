@@ -72,7 +72,6 @@ class ReconciliationEvidenceStoreTests(unittest.TestCase):
             title="三体",
             source_state="do",
             summary="bounded result",
-            requires_user_action=False,
         )
         self.store.upsert(
             ReconciliationEvidence(
@@ -80,6 +79,7 @@ class ReconciliationEvidenceStoreTests(unittest.TestCase):
                 policy_version=2,
                 outcome="not_found",
                 user_plan="weread_not_found",
+                requires_user_action=False,
             )
         )
         self.store.upsert(
