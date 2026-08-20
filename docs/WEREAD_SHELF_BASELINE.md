@@ -1,6 +1,6 @@
 # WeRead shelf baseline
 
-Status: **official `/shelf/sync` provider and local SQLite baseline implemented on `agent/weread-shelf-baseline`; local regression pending.**
+Status: **official `/shelf/sync`, local SQLite baseline, shelf CLI, and local two-sided reconciliation preview implemented on `agent/weread-shelf-baseline`; preview regression pending.**
 
 Date: 2026-08-20
 
@@ -8,7 +8,7 @@ Date: 2026-08-20
 
 Treat WeRead shelf state as a second local baseline, parallel to the existing Douban reading-history index.
 
-The first account-level flow is:
+The account-level flow is:
 
 ```text
 Douban reading-history baseline
@@ -107,24 +107,72 @@ books.length + albums.length + (mp present ? 1 : 0)
 
 Malformed book entries, duplicate `bookId`s, invalid arrays, and provider errors fail closed rather than producing a partial baseline.
 
-## Implemented local index
+## Implemented local index and CLI
 
-`WeReadShelfIndex` now supports:
+`WeReadShelfIndex` supports:
 
 ```text
 replace_full(snapshot)
 status()
 get(book_id)
+all_books()
 find_title_candidates(title)
 ```
 
-Local title lookup is a shortlist only. Work/Edition identity still requires the existing resolver plus lazy `/book/info` requests for the small set of candidates that matter.
+`ReadingHistoryIndex` also exposes `all_entries()` so the two complete local baselines can be compared without network traffic.
+
+The shelf CLI is live-validated:
+
+```bash
+douban-weread weread shelf sync
+douban-weread weread shelf status
+douban-weread weread shelf lookup "白夜行"
+```
+
+The first real shelf sync produced:
+
+```text
+Visible shelf entries: 303
+Electronic books: 302
+Albums / audio books: 0
+Article collection: yes
+```
+
+A local lookup for `白夜行` returned no shelf candidate even though the catalog-level flow had already proven an exact available WeRead Edition. This establishes that **catalog availability and shelf membership are separate states**.
 
 The implementation deliberately does **not** call `/book/info` once for every shelf item during full sync.
 
-## Reconciliation semantics
+## Local two-sided reconciliation preview
 
-The first reconciliation report should distinguish at least:
+The first local reconciliation command is:
+
+```bash
+douban-weread weread shelf preview --limit 10
+```
+
+It uses the complete local Douban history and WeRead electronic-book shelf only; it makes no provider request and performs no mutation.
+
+The preview compares exact normalized title keys and reports:
+
+```text
+Douban history total
+WeRead electronic shelf total
+shared exact normalized title keys
+Douban entries with an exact-title shelf candidate
+WeRead books with an exact-title Douban candidate
+Douban-only by exact title
+WeRead-only by exact title
+ambiguous shared title keys
+possible finished/state conflicts
+```
+
+Possible state conflicts are deliberately restricted to singleton exact-title groups where WeRead reports `finishReading=1` while Douban is `wish` or `do`.
+
+**Important:** exact normalized title overlap is only shortlist evidence. It is not same-Work or same-Edition evidence and never authorizes a write. Duplicate-title groups remain ambiguous. Final reconciliation requires lazy metadata verification through the existing resolver.
+
+## Target reconciliation semantics
+
+The eventual verified reconciliation report should distinguish at least:
 
 ```text
 ALIGNED
@@ -137,51 +185,53 @@ AMBIGUOUS
 
 Examples:
 
-- Douban WISH + same exact Edition in WeRead shelf → `ALIGNED`.
-- Douban WISH + no same-Work shelf entry → `DOUBAN_ONLY`.
-- WeRead shelf same Work + no Douban state → `WEREAD_ONLY`.
+- Douban WISH + resolver-confirmed same exact Edition in WeRead shelf → `ALIGNED`.
+- Douban WISH + no verified same-Work shelf entry → `DOUBAN_ONLY`.
+- WeRead shelf same Work + no verified Douban state → `WEREAD_ONLY`.
 - Same Work but different Edition → `ALTERNATIVE_EDITION`.
 - WeRead `finishReading=1` while Douban says WISH/READING → state conflict; do not silently downgrade or overwrite.
-- Weak title-only evidence → `AMBIGUOUS`.
+- Weak/title-only evidence → `AMBIGUOUS` until verified.
 
 A WeRead shelf item is not automatically equivalent to Douban WISH. Shelf presence and reading progress are separate signals.
 
 ## Safety boundary
 
-The first shelf milestone is read-only:
+The shelf milestone remains read-only:
 
-1. `/shelf/sync` provider support — implemented.
-2. Local shelf SQLite baseline — implemented.
-3. Status / local lookup CLI — next after regression passes.
-4. Reconciliation report — after the baseline is live-validated.
-5. No automatic writes.
+1. `/shelf/sync` provider support — implemented and live-validated.
+2. Local shelf SQLite baseline — implemented and live-validated.
+3. Status / local lookup CLI — implemented and live-validated.
+4. Local exact-title reconciliation preview — implemented; regression pending.
+5. Lazy Work/Edition verification for preview shortlists — next.
+6. No automatic writes.
 
 Automatic application can be considered later only for separately defined safe cases and explicit user settings/confirmation.
 
-## Regression coverage added
+## Regression history
 
-Eight tests were added for the first shelf slice:
+The provider/storage plus shelf CLI baseline reached:
 
-- exact zero-parameter `/shelf/sync` request construction;
-- `books[]` normalization;
-- `albums[]` + `mp` accounting without converting them into books;
-- invalid/missing book metadata fail-closed behavior;
-- duplicate `bookId` fail-closed behavior;
-- atomic local baseline persistence and status counts;
-- local title shortlist behavior;
-- preservation of the previous complete baseline when replacement validation fails;
-- safe uninitialized status.
-
-The full suite still needs to be run locally before adding the shelf CLI or making the first live full-shelf request.
-
-## Next implementation slice
-
-After the local suite is green, add:
-
-```bash
-douban-weread weread shelf sync
-douban-weread weread shelf status
-douban-weread weread shelf lookup "白夜行"
+```text
+Ran 150 tests in 0.078s
+OK
 ```
 
-Only after those commands are covered by tests should the first real `/shelf/sync` be run with the user's local API key.
+Five additional tests now cover the local two-sided preview:
+
+- normalized exact-title overlap and one-sided counts;
+- singleton finished/state conflict detection;
+- duplicate-title ambiguity fail-closed behavior;
+- preview CLI over two complete local baselines without network access;
+- refusal to preview when either baseline is incomplete.
+
+The expected full local suite after this slice is 155 tests.
+
+## Next validation
+
+Run the local suite, then execute the local-only preview against the real synchronized baselines:
+
+```bash
+douban-weread weread shelf preview --limit 10
+```
+
+The preview output should be treated as a triage map, not a final synchronization decision. The next engineering slice will lazily verify selected shared/one-sided candidates with full Douban and WeRead Edition metadata before assigning `ALIGNED`, `DOUBAN_ONLY`, `WEREAD_ONLY`, `ALTERNATIVE_EDITION`, or a state conflict.
