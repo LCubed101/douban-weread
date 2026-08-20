@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from douban_weread.core.models import Edition
+from douban_weread.providers.weread.shelf import WeReadShelfSnapshot, parse_shelf_payload
 
 
 DEFAULT_GATEWAY_URL = "https://i.weread.qq.com/api/agent/gateway"
@@ -139,6 +140,14 @@ class WeReadClient:
                 "raw": dict(payload),
             },
         )
+
+    def sync_shelf(self) -> WeReadShelfSnapshot:
+        """Fetch one complete read-only shelf snapshot through official `/shelf/sync`."""
+        payload = self._call("/shelf/sync")
+        try:
+            return parse_shelf_payload(payload)
+        except ValueError as exc:
+            raise WeReadProviderError(f"WeRead shelf response is invalid: {exc}") from exc
 
     def _call(self, api_name: str, **params: object) -> dict[str, object]:
         if not self.api_key:
