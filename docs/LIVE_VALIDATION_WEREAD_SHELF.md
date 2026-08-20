@@ -216,10 +216,72 @@ The first policy is intentionally suggestion-only:
 
 No cross-platform state-changing action is auto-applied in v0.2.
 
+## First live lazy shelf verification
+
+After the single-book lazy verification path was added, the full local suite passed:
+
+```text
+Ran 180 tests in 0.273s
+OK
+```
+
+The installed shelf CLI exposed:
+
+```text
+douban-weread weread shelf {sync,status,lookup,preview,verify}
+```
+
+The same WeRead shelf book used for progress validation was then verified end-to-end:
+
+```text
+WeRead bookId: 37724838
+Title: 一个无政府主义者的意外死亡
+Progress: 0%
+Started: no
+Verified WeRead state: unread
+```
+
+Bounded Douban verification found two resolver-confirmed same-Work candidates. The best candidate was:
+
+```text
+Douban subject: 26649304
+ISBN: 9787532770892
+Match: exact_edition
+Exact Edition: True
+Local history state: none
+Reason: exact ISBN match
+```
+
+The strongest verified Douban Work state in the complete local history baseline was `none`, so the suggestion-only policy returned:
+
+```text
+Action: suggest_wish
+Suggested Douban state: wish
+Safe to auto apply: False
+Requires user decision: True
+```
+
+This is the first live proof of the full WeRead-shelf-to-Douban recommendation chain:
+
+```text
+personal WeRead shelf membership
+→ full WeRead Edition metadata
+→ user-specific /book/getprogress
+→ bounded Douban discovery + local complete history shortlist
+→ Work/Edition resolver
+→ conservative cross-platform state recommendation
+```
+
+The live command was accidentally repeated once with the same inputs and returned the same result. Both runs were read-only and produced no mutation.
+
+The bounded verifier explicitly does not claim that public Douban search is exhaustive. Local history candidates are added before state reconciliation so an older same-Work Edition can still prevent an unsafe downgrade or duplicate suggestion.
+
 ## Safety boundary
 
 - No WeRead mutation was performed.
 - No Douban mutation was performed in this shelf milestone.
 - Exact normalized title overlap is shortlist evidence only.
-- Full `/book/info` and `/book/getprogress` should be fetched lazily only for candidates that require Work/Edition or reading-state verification.
+- Full `/book/info` and `/book/getprogress` are fetched lazily only for candidates that require Work/Edition or reading-state verification.
+- Single-book verification is bounded by default to at most 3 public Douban search candidates and 5 local history shortlist candidates.
 - Do not fan out detail requests across the full 302-book shelf merely to build a baseline.
+- Cross-platform state changes remain suggestion-only in v0.2.
