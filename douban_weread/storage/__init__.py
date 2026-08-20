@@ -6,6 +6,7 @@ from .history import (
     normalize_history_title,
 )
 from .reconciliation_checkpoint import (
+    CURRENT_RECONCILIATION_POLICY_VERSION,
     ReconciliationCheckpoint,
     ReconciliationCheckpointStore,
     default_reconciliation_db_path,
@@ -24,6 +25,7 @@ __all__ = [
     "ReadingHistoryIndex",
     "default_history_db_path",
     "normalize_history_title",
+    "CURRENT_RECONCILIATION_POLICY_VERSION",
     "ReconciliationCheckpoint",
     "ReconciliationCheckpointStore",
     "default_reconciliation_db_path",
