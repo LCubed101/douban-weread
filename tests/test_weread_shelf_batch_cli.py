@@ -85,7 +85,7 @@ class WeReadShelfBatchCliTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("Read-only reconciliation batch", output)
         self.assertIn("Direction: weread-to-douban", output)
-        self.assertIn("Reconciliation policy: v2", output)
+        self.assertIn("Reconciliation policy: v1", output)
         self.assertIn("Outcome: suggest_wish", output)
         self.assertIn("Suggested Douban state: wish", output)
         self.assertIn("User plan: suggest_douban_wish", output)
