@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 _ALLOWED_DIRECTIONS = {"weread-to-douban", "douban-to-weread"}
-CURRENT_RECONCILIATION_POLICY_VERSION = 2
+CURRENT_RECONCILIATION_POLICY_VERSION = 3
 
 
 @dataclass(slots=True, frozen=True)
