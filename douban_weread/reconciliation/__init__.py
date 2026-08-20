@@ -28,6 +28,14 @@ from .shelf_batch import (
     run_reconciliation_batch,
 )
 from .user_plan import UserPlanKind, UserReconciliationPlan, user_plan_for_batch_item
+from .worker import (
+    ReconciliationWorkerCoverage,
+    ReconciliationWorkerStatus,
+    ReconciliationWorkerTickResult,
+    ReconciliationWorkerView,
+    get_reconciliation_worker_status,
+    run_reconciliation_worker_tick,
+)
 
 __all__ = [
     "CrossPlatformStateAction",
@@ -57,4 +65,10 @@ __all__ = [
     "UserPlanKind",
     "UserReconciliationPlan",
     "user_plan_for_batch_item",
+    "ReconciliationWorkerCoverage",
+    "ReconciliationWorkerStatus",
+    "ReconciliationWorkerTickResult",
+    "ReconciliationWorkerView",
+    "get_reconciliation_worker_status",
+    "run_reconciliation_worker_tick",
 ]
