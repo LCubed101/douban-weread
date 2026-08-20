@@ -7,11 +7,13 @@ from collections.abc import Callable, Sequence
 from typing import Protocol, TextIO
 
 from douban_weread.core.models import Edition
+from douban_weread.providers.douban import DoubanBookSearchClient, DoubanProviderError
 from douban_weread.providers.weread import (
     WeReadClient,
     WeReadProviderError,
     WeReadSearchCandidate,
 )
+from douban_weread.resolver import compare_editions
 
 
 EXIT_OK = 0
@@ -25,7 +27,12 @@ class WeReadSearchClient(Protocol):
     def get_book(self, book_id: str) -> Edition | None: ...
 
 
+class DoubanEditionClient(Protocol):
+    def get_by_subject_id(self, subject_id: str) -> Edition | None: ...
+
+
 WeReadClientFactory = Callable[[], WeReadSearchClient]
+DoubanClientFactory = Callable[[], DoubanEditionClient]
 
 
 def _default_client() -> WeReadClient:
@@ -35,7 +42,7 @@ def _default_client() -> WeReadClient:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="douban-weread weread",
-        description="Read-only WeRead search and metadata lookup through Tencent's official Agent API.",
+        description="Read-only WeRead search, metadata lookup, and cross-platform Edition comparison.",
     )
     subparsers = parser.add_subparsers(dest="weread_command", required=True)
 
@@ -64,6 +71,17 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     book.add_argument("--id", required=True, dest="book_id", help="Exact WeRead bookId to inspect.")
+
+    compare = subparsers.add_parser(
+        "compare",
+        help="Compare one exact Douban subject with one exact WeRead bookId.",
+        description=(
+            "Read-only cross-platform Edition comparison. Fetches both exact records and runs the existing "
+            "provider-agnostic resolver; it does not infer catalog availability or change either service."
+        ),
+    )
+    compare.add_argument("--subject", required=True, help="Exact Douban Book subject ID.")
+    compare.add_argument("--id", required=True, dest="book_id", help="Exact WeRead bookId.")
     return parser
 
 
@@ -93,6 +111,8 @@ def format_book(edition: Edition) -> str:
         lines.append(f"   Publication: {publication}")
     if edition.isbn:
         lines.append(f"   ISBN: {edition.isbn}")
+    if edition.douban_id:
+        lines.append(f"   Douban subject: {edition.douban_id}")
     if edition.weread_id:
         lines.append(f"   WeRead bookId: {edition.weread_id}")
     deep_link = edition.source_metadata.get("deep_link")
@@ -105,6 +125,7 @@ def run(
     argv: Sequence[str] | None = None,
     *,
     client_factory: WeReadClientFactory = _default_client,
+    douban_client_factory: DoubanClientFactory = DoubanBookSearchClient,
     stdout: TextIO = sys.stdout,
     stderr: TextIO = sys.stderr,
 ) -> int:
@@ -153,6 +174,50 @@ def run(
         print(format_book(edition), file=stdout)
         print(
             "\nMetadata is normalized for Edition comparison; availability classification still requires resolver evidence.",
+            file=stdout,
+        )
+        return EXIT_OK
+
+    if args.weread_command == "compare":
+        weread_client = client_factory()
+        douban_client = douban_client_factory()
+        try:
+            source = douban_client.get_by_subject_id(args.subject)
+        except (DoubanProviderError, ValueError) as exc:
+            print(f"Douban provider error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+        try:
+            candidate = weread_client.get_book(args.book_id)
+        except (WeReadProviderError, ValueError) as exc:
+            print(f"WeRead provider error: {exc}", file=stderr)
+            return EXIT_PROVIDER_ERROR
+
+        if source is None:
+            print(f"No Douban Edition found for subject {args.subject}.", file=stdout)
+            return EXIT_NO_RESULTS
+        if candidate is None:
+            print(f"No WeRead book metadata found for bookId {args.book_id}.", file=stdout)
+            return EXIT_NO_RESULTS
+
+        result = compare_editions(source, candidate)
+        print("Douban Edition:\n", file=stdout)
+        print(format_book(source), file=stdout)
+        print("\nWeRead Edition:\n", file=stdout)
+        print(format_book(candidate), file=stdout)
+        print("\nResolver result:", file=stdout)
+        print(f"Match: {result.kind.value}", file=stdout)
+        print(f"Same Work: {result.same_work}", file=stdout)
+        print(f"Exact Edition: {result.exact_edition}", file=stdout)
+        print(f"Requires confirmation: {result.requires_confirmation}", file=stdout)
+        print(f"Safe to auto align: {result.safe_to_auto_apply}", file=stdout)
+        if result.reasons:
+            print(f"Reasons: {'; '.join(result.reasons)}", file=stdout)
+        if result.edition_differences:
+            print(f"Edition differences: {'; '.join(result.edition_differences)}", file=stdout)
+        if result.material_differences:
+            print(f"Material differences: {'; '.join(result.material_differences)}", file=stdout)
+        print(
+            "Availability: not assigned by this command; search `soldout` evidence is evaluated separately.",
             file=stdout,
         )
         return EXIT_OK
