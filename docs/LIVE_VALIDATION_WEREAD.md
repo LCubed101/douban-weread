@@ -2,15 +2,21 @@
 
 Date: 2026-08-20
 
-Branch: `agent/weread-search-status`
+Branch: `agent/weread-shelf-baseline`
 
 ## Local regression baseline
 
-After the read-only WeRead search, `/book/info`, exact cross-platform compare, and `ReadingIntent` alignment path were added, the full local suite passed:
+The single-book WeRead path passed 136 tests before shelf work. After `/shelf/sync`, local shelf storage, and the shelf CLI were added, the full local suite passed:
 
 ```text
-Ran 136 tests in 0.069s
+Ran 150 tests in 0.078s
 OK
+```
+
+The installed CLI smoke test also succeeded:
+
+```text
+usage: douban-weread weread shelf [-h] {sync,status,lookup} ...
 ```
 
 ## Live `/store/search`
@@ -69,7 +75,7 @@ The ISBNs are identical. Under the resolver contract, an exact normalized ISBN m
 
 ## Live Douban → WeRead resolver comparison
 
-The comparison was then executed through the project itself rather than by manual inspection:
+The comparison was executed through the project itself:
 
 ```bash
 douban-weread weread compare --subject 27112607 --id 230107
@@ -87,27 +93,11 @@ Safe to auto align: True
 Reasons: exact ISBN match
 ```
 
-The command fetched the exact Douban subject and exact WeRead `bookId`, normalized both records, and ran the existing provider-agnostic resolver. This validates the cross-platform Edition identity path end to end for the test pair:
-
-```text
-Douban subject 27112607
-→ 白夜行 / ISBN 9787544291163
-
-WeRead bookId 230107
-→ 白夜行 / ISBN 9787544291163
-
-compare_editions(...)
-→ EXACT_EDITION
-→ same_work=True
-→ exact_edition=True
-→ safe_to_auto_apply=True
-```
-
 No state-changing operation was performed on either platform.
 
 ## Live Douban → WeRead `ReadingIntent` resolution
 
-The full bounded search/alignment path was then executed through the project:
+The full bounded search/alignment path was then executed:
 
 ```bash
 douban-weread weread resolve --subject 27112607 --limit 5
@@ -131,7 +121,6 @@ Selected WeRead Edition:
    Publication: 南海出版公司 · 2017-07-21
    ISBN: 9787544291163
    WeRead bookId: 230107
-   Deep link: https://weread.qq.com/book-detail?type=1&v=65032c105382db65050e7aa
    Search sold out: no
 
 Resolver evidence:
@@ -142,7 +131,7 @@ Requires confirmation: False
 Reasons: exact ISBN match
 ```
 
-The project therefore completed the first real end-to-end availability classification:
+The project therefore completed the first real end-to-end catalog availability classification:
 
 ```text
 exact Douban Edition
@@ -153,28 +142,60 @@ exact Douban Edition
 → AVAILABLE_EXACT
 ```
 
-The command examined only the first WeRead Edition because it was already an exact ISBN match. No state-changing operation was performed on either platform.
+## Live `/shelf/sync` baseline
 
-## Availability boundary
+After the shelf CLI and local SQLite baseline passed 150 tests, one read-only official shelf sync was executed:
 
-The live search returned `Sold out: no` for WeRead `bookId=230107`. Combined with resolver-confirmed exact Edition identity, this is enough for the project's catalog-level `AVAILABLE_EXACT` mapping.
-
-The availability label is intentionally scoped: `soldout=0` is official WeRead catalog evidence that the candidate is not reported sold out, but it does not guarantee account-specific purchase/subscription entitlement in every user context.
-
-A same-Work candidate reported as `soldout=1` must not be mislabeled `NOT_FOUND`; the alignment layer preserves a separate `UNAVAILABLE` state. Likewise, `NOT_FOUND` remains bounded by the configured search window rather than claiming an exhaustive absence from the entire WeRead catalog.
-
-## Next milestone: shelf baseline and two-sided reconciliation
-
-The next milestone moves from single-book availability to account-level reconciliation:
-
-```text
-Douban reading-history baseline
-        ↕
-Work / Edition reconciliation
-        ↕
-WeRead shelf baseline
+```bash
+douban-weread weread shelf sync
 ```
 
-The official WeRead `/shelf/sync` response separates `books[]`, `albums[]`, and the `mp` article-collection entry. Only `books[]` should enter Douban book Work/Edition matching. `albums[]` and `mp` remain part of shelf accounting but must not be treated as Douban book candidates.
+Observed local baseline status:
 
-The first shelf implementation should be read-only and local-first: fetch the full shelf once, persist a baseline, and produce a reconciliation report before any automatic state-changing operation is considered.
+```text
+WeRead shelf baseline: complete
+Visible shelf entries: 303
+Electronic books: 302
+Albums / audio books: 0
+Article collection: yes
+Last full sync: 2026-08-20T11:39:53.739860+00:00
+Database: /Users/ludao/.local/share/douban-weread/history.sqlite3
+```
+
+This validates that `/shelf/sync` can establish a complete account-level WeRead baseline in one request and that the project preserves the official shelf accounting distinction between electronic books, albums/audio books, and the article-collection entry.
+
+A subsequent local-only lookup returned:
+
+```bash
+douban-weread weread shelf lookup "白夜行"
+```
+
+```text
+No local WeRead shelf candidates found for "白夜行".
+```
+
+This is an important semantic distinction: `白夜行` was proven `AVAILABLE_EXACT` in the WeRead catalog (`bookId=230107`), but it is not currently present in the user's synced shelf baseline. Therefore **catalog availability and shelf membership are separate states and must never be conflated**.
+
+No state-changing operation was performed on either platform.
+
+## Availability and shelf boundaries
+
+- `AVAILABLE_EXACT` / `AVAILABLE_ALTERNATIVE` describe catalog-level availability after resolver verification.
+- Shelf membership comes only from the user-bound `/shelf/sync` baseline.
+- `soldout=0` does not imply “already on shelf.”
+- “On shelf” does not automatically imply Douban `WISH`; reading progress/state must be considered separately.
+- `albums[]` and the `mp` article-collection entry participate in shelf counts but do not enter Douban Book Work/Edition reconciliation.
+
+## Next milestone: local two-sided reconciliation preview
+
+The next step is deliberately local-only:
+
+```text
+complete Douban history baseline
++ complete WeRead shelf baseline
+→ normalized-title cross-index
+→ candidate overlap / one-sided presence / possible state conflicts
+→ no writes
+```
+
+Title overlap is only a shortlist signal. It must not be promoted to same-Work or same-Edition evidence without lazy metadata verification through the existing resolver.
