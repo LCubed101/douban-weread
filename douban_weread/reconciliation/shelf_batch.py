@@ -16,6 +16,7 @@ from douban_weread.storage import (
     IndexedHistoryEntry,
     IndexedWeReadShelfBook,
     ReconciliationCheckpointStore,
+    ReconciliationEvidence,
     normalize_history_title,
 )
 
@@ -97,6 +98,10 @@ class CheckpointProvider(Protocol):
     ) -> None: ...
 
 
+class EvidenceProvider(Protocol):
+    def upsert(self, evidence: ReconciliationEvidence) -> None: ...
+
+
 @dataclass(slots=True, frozen=True)
 class BatchGeneration:
     shelf_sync_at: str
@@ -139,6 +144,7 @@ def run_reconciliation_batch(
     checkpoint_provider: CheckpointProvider,
     weread_provider: WeReadBatchProvider,
     douban_provider: DoubanBatchProvider,
+    evidence_provider: EvidenceProvider | None = None,
     douban_search_limit: int = 3,
     history_candidate_limit: int = 5,
     weread_catalog_limit: int = 5,
@@ -156,6 +162,10 @@ def run_reconciliation_batch(
     items. Active Douban READING items also use a wider bounded WeRead catalog
     window (up to 10 candidates) because a false negative is more costly for a
     book the user is currently reading.
+
+    When an evidence provider is supplied, normalized evidence is persisted
+    before the checkpoint. An evidence-write failure therefore cannot turn an
+    item into a checkpoint-only result that later reporting is unable to explain.
 
     Checkpoints are scoped to both baseline timestamps and a direction-specific
     reconciliation policy version. The shared resolver-v3 title semantics affect
@@ -219,6 +229,14 @@ def run_reconciliation_batch(
                 history_candidate_limit=max(1, min(history_candidate_limit, 30)),
             )
             outcome = verification.decision.action.value
+            item = BatchItemResult(
+                direction=direction,
+                item_id=book.book_id,
+                title=book.title,
+                outcome=outcome,
+                shelf_verification=verification,
+            )
+            _persist_evidence_if_requested(item, generation, evidence_provider)
             checkpoint_provider.mark_completed(
                 direction,
                 book.book_id,
@@ -227,15 +245,7 @@ def run_reconciliation_batch(
                 policy_version=generation.policy_version,
                 outcome=outcome,
             )
-            processed.append(
-                BatchItemResult(
-                    direction=direction,
-                    item_id=book.book_id,
-                    title=book.title,
-                    outcome=outcome,
-                    shelf_verification=verification,
-                )
-            )
+            processed.append(item)
     else:
         candidates = sorted(
             report.active_douban_only_entries,
@@ -272,6 +282,17 @@ def run_reconciliation_batch(
                 selected_shelf_book = shelf_provider.get(selected_edition.weread_id)
 
             outcome = alignment.intent.weread_status.value
+            item = BatchItemResult(
+                direction=direction,
+                item_id=entry.subject_id,
+                title=entry.title,
+                outcome=outcome,
+                source_state=entry.state,
+                catalog_alignment=alignment,
+                selected_shelf_book=selected_shelf_book,
+                catalog_search_limit_used=catalog_limit_used,
+            )
+            _persist_evidence_if_requested(item, generation, evidence_provider)
             checkpoint_provider.mark_completed(
                 direction,
                 entry.subject_id,
@@ -280,18 +301,7 @@ def run_reconciliation_batch(
                 policy_version=generation.policy_version,
                 outcome=outcome,
             )
-            processed.append(
-                BatchItemResult(
-                    direction=direction,
-                    item_id=entry.subject_id,
-                    title=entry.title,
-                    outcome=outcome,
-                    source_state=entry.state,
-                    catalog_alignment=alignment,
-                    selected_shelf_book=selected_shelf_book,
-                    catalog_search_limit_used=catalog_limit_used,
-                )
-            )
+            processed.append(item)
 
     pending_before = len(pending)
     return ReconciliationBatchResult(
@@ -310,6 +320,83 @@ def run_reconciliation_batch(
         remaining_after=max(0, pending_before - len(processed)),
         requested_limit=requested_limit,
         effective_limit=effective_limit,
+    )
+
+
+def _persist_evidence_if_requested(
+    item: BatchItemResult,
+    generation: BatchGeneration,
+    evidence_provider: EvidenceProvider | None,
+) -> None:
+    if evidence_provider is None:
+        return
+
+    # Runtime import avoids a module cycle: user_plan imports BatchItemResult for
+    # its public product-level classifier.
+    from .user_plan import user_plan_for_batch_item
+
+    plan = user_plan_for_batch_item(item)
+    common = dict(
+        direction=item.direction,
+        item_id=item.item_id,
+        shelf_sync_at=generation.shelf_sync_at,
+        history_sync_at=generation.history_sync_at,
+        policy_version=generation.policy_version,
+        title=item.title,
+        source_state=item.source_state,
+        outcome=item.outcome,
+        user_plan=plan.kind.value,
+        summary=plan.summary,
+        requires_user_action=plan.requires_user_action,
+        deep_link=plan.deep_link,
+    )
+
+    if item.direction == WEREAD_TO_DOUBAN:
+        verification = item.shelf_verification
+        if verification is None:
+            raise ValueError("WeRead-to-Douban evidence requires shelf verification")
+        best = verification.best_match
+        evidence_provider.upsert(
+            ReconciliationEvidence(
+                **common,
+                selected_douban_subject=(best.edition.douban_id if best is not None else None),
+                selected_weread_book_id=verification.weread_edition.weread_id or item.item_id,
+                selected_edition_title=verification.weread_edition.title,
+                match_kind=(best.match.kind.value if best is not None else None),
+                exact_edition=(best.match.exact_edition if best is not None else None),
+                requires_confirmation=(best.match.requires_confirmation if best is not None else None),
+                shelf_membership="yes",
+                weread_reading_state=verification.weread_state.value,
+                weread_progress=verification.progress.progress,
+                strongest_douban_state=verification.strongest_douban_state.value,
+                suggested_douban_state=verification.decision.suggested_douban_state.value,
+            )
+        )
+        return
+
+    alignment = item.catalog_alignment
+    if alignment is None:
+        raise ValueError("Douban-to-WeRead evidence requires catalog alignment")
+    intent = alignment.intent
+    selected = intent.selected_edition
+    if selected is None:
+        membership = "unresolved"
+    else:
+        membership = "yes" if item.selected_shelf_book is not None else "no"
+    evidence_provider.upsert(
+        ReconciliationEvidence(
+            **common,
+            selected_douban_subject=item.item_id,
+            selected_weread_book_id=(selected.weread_id if selected is not None else None),
+            selected_edition_title=(selected.title if selected is not None else None),
+            match_kind=(alignment.match.kind.value if alignment.match is not None else None),
+            exact_edition=(alignment.match.exact_edition if alignment.match is not None else None),
+            requires_confirmation=(alignment.match.requires_confirmation if alignment.match is not None else None),
+            weread_catalog_status=intent.weread_status.value,
+            weread_resolution=intent.resolution.value,
+            shelf_membership=membership,
+            catalog_search_limit=item.catalog_search_limit_used,
+        )
     )
 
 
