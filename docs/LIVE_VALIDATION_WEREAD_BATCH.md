@@ -13,6 +13,13 @@ Ran 198 tests in 0.543s
 OK
 ```
 
+After catalog availability and current shelf membership were separated for the Douban → WeRead direction, the complete suite passed:
+
+```text
+Ran 201 tests in 0.425s
+OK
+```
+
 The installed shelf CLI exposed:
 
 ```text
@@ -160,6 +167,71 @@ This is consistent with the earlier live case where `37724838` had `Progress: 0%
 
 Because the verified Douban Work was already `READ`, the policy returned `ask_reread` and preserved the stronger historical state instead of downgrading it to `READING`.
 
+## First live Douban → WeRead batch
+
+The first live batch in the reverse direction used the same complete baseline pair:
+
+```text
+Direction: douban-to-weread
+Douban baseline: 2026-08-19T11:08:42.065667+00:00
+WeRead shelf baseline: 2026-08-20T11:39:53.739860+00:00
+Candidate queue: 1437
+Already checkpointed in this generation: 0
+Pending before batch: 1437
+Batch size: 2
+```
+
+The first processed item was:
+
+```text
+1000个铁粉
+Douban subject: 35791241
+Douban state: wish
+WeRead catalog status: available_exact
+Resolution: exact_match
+Selected WeRead bookId: 43390233
+Selected Edition: 1000个铁粉：打造个人品牌的底层逻辑
+Current shelf membership: no
+Outcome: available_exact
+Checkpointed for this baseline: yes
+```
+
+This is a useful title-difference case. The selected WeRead title contains a subtitle that does not exactly match the Douban baseline title, but full Edition resolution established an exact Edition. The resolved `bookId` was then checked against the complete local shelf baseline and was not present.
+
+The second processed item was:
+
+```text
+100天后会死的鳄鱼君
+Douban subject: 35224085
+Douban state: wish
+WeRead catalog status: available_exact
+Resolution: exact_match
+Selected WeRead bookId: 3300019441
+Selected Edition: 100天后会死的鳄鱼君
+Current shelf membership: no
+Outcome: available_exact
+Checkpointed for this baseline: yes
+```
+
+The batch completed with:
+
+```text
+Processed this batch: 2
+Remaining pending for this generation: 1435
+```
+
+These two live cases establish that Douban → WeRead reconciliation must expose two independent facts:
+
+```text
+catalog availability
+!=
+current personal shelf membership
+```
+
+For both items, the exact WeRead Edition is available in the official catalog, but that resolved exact Edition is not currently on the user's shelf. The user-facing interpretation is therefore "an exact WeRead Edition is available but has not been added to the current shelf", not merely `AVAILABLE_EXACT`.
+
+No WeRead shelf mutation endpoint is used by this milestone. The official deep link may be surfaced as a user navigation action, but the batch itself remains read-only.
+
 ## Safety boundary
 
 - Batch processing is read-only.
@@ -170,3 +242,4 @@ Because the verified Douban Work was already `READ`, the policy returned `ask_re
 - Refreshing either complete baseline creates a new reconciliation generation naturally.
 - Provider failures must not be checkpointed as completed work.
 - A 0% displayed progress value is not treated as sufficient reading-state evidence without considering the official start flag.
+- Catalog availability and current personal shelf membership are modeled separately.
