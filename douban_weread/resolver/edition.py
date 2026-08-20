@@ -39,6 +39,7 @@ _EDITION_MARKERS = {
     "revised": ("修订版", "修订", "增订版", "增订", "revised", "updated edition"),
     "annotated": ("注释版", "评注版", "评注", "annotated"),
 }
+_FIRST_VOLUME_SUFFIXES = ("第一部", "第1部", "1")
 
 
 def _norm_text(value: str | None) -> str:
@@ -57,6 +58,29 @@ def _title_for_work(value: str) -> str:
     for alias in aliases:
         text = text.replace(alias, " ")
     return _norm_text(text)
+
+
+def _first_volume_title_relation(left: str, right: str) -> bool:
+    """Recognize a narrow base-title ↔ first-volume title relation.
+
+    This is intentionally much narrower than relaxing the global work-title
+    threshold. It only handles a title that is exactly the other title plus a
+    first-volume suffix such as ``1`` / ``第一部`` / ``第1部``. The caller must
+    still require author overlap, and the relation always requires confirmation
+    before any concrete cross-platform Edition action.
+    """
+    a = _title_for_work(left)
+    b = _title_for_work(right)
+    if not a or not b or a == b:
+        return False
+
+    suffixes = tuple(_norm_text(value) for value in _FIRST_VOLUME_SUFFIXES)
+    for base, extended in ((a, b), (b, a)):
+        if len(base) < 2:
+            continue
+        if any(extended == base + suffix for suffix in suffixes):
+            return True
+    return False
 
 
 def _norm_person(value: str) -> str:
@@ -108,8 +132,8 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
     Only an exact ISBN match is considered safe for automatic state-changing
     actions. Known differences in ISBN, publisher, or publication year identify
     a different Edition of the same Work, but do not by themselves require
-    confirmation. Translator, language, and revision/content markers are
-    material differences and do require confirmation.
+    confirmation. Translator, language, revision/content markers, and the narrow
+    first-volume title relation are never auto-applied.
     """
 
     reasons: list[str] = []
@@ -134,12 +158,15 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
         reasons.append("ISBN differs")
 
     title_similarity = _title_similarity(source.title, candidate.title)
+    first_volume_title_variant = _first_volume_title_relation(source.title, candidate.title)
     source_authors = _norm_people(source.authors)
     candidate_authors = _norm_people(candidate.authors)
     author_overlap = _overlap(source_authors, candidate_authors)
 
     score = 0.35 * title_similarity + 0.30 * author_overlap
     reasons.append(f"work-title similarity {title_similarity:.2f}")
+    if first_volume_title_variant:
+        reasons.append("first-volume title variant")
     if author_overlap:
         reasons.append(f"author overlap {author_overlap:.2f}")
 
@@ -190,8 +217,12 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
     score = round(min(score, 0.99), 4)
 
     # A title match alone is never sufficient to conclude that two records are
-    # the same work. We require meaningful author evidence as well.
-    same_work = title_similarity >= 0.88 and author_overlap > 0
+    # the same work. We require meaningful author evidence as well. The only
+    # narrow exception to the normal title threshold is an exact base-title ↔
+    # first-volume title relation; that path is still confirmation-only.
+    same_work = author_overlap > 0 and (
+        title_similarity >= 0.88 or first_volume_title_variant
+    )
 
     if not same_work:
         kind = (
@@ -213,6 +244,9 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
         )
 
     if material:
+        kind = MatchKind.ALTERNATIVE_EDITION
+        requires_confirmation = True
+    elif first_volume_title_variant:
         kind = MatchKind.ALTERNATIVE_EDITION
         requires_confirmation = True
     elif edition_differences:
