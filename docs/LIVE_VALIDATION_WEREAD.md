@@ -6,10 +6,10 @@ Branch: `agent/weread-search-status`
 
 ## Local regression baseline
 
-After the read-only WeRead search, `/book/info`, and exact cross-platform compare CLI were added, the full local suite passed:
+After the read-only WeRead search, `/book/info`, exact cross-platform compare, and `ReadingIntent` alignment path were added, the full local suite passed:
 
 ```text
-Ran 129 tests in 0.108s
+Ran 136 tests in 0.069s
 OK
 ```
 
@@ -105,25 +105,76 @@ compare_editions(...)
 
 No state-changing operation was performed on either platform.
 
-## Availability boundary
+## Live Douban → WeRead `ReadingIntent` resolution
 
-The live search returned `Sold out: no` for WeRead `bookId=230107`. Combined with resolver-confirmed exact Edition identity, this is enough for the first catalog-level `AVAILABLE_EXACT` mapping used by the project.
+The full bounded search/alignment path was then executed through the project:
 
-The availability label is intentionally scoped: `soldout=0` is official WeRead catalog evidence that the candidate is not reported sold out, but it does not guarantee account-specific purchase/subscription entitlement in every user context.
+```bash
+douban-weread weread resolve --subject 27112607 --limit 5
+```
 
-A same-Work candidate reported as `soldout=1` must not be mislabeled `NOT_FOUND`; the alignment layer therefore preserves a separate `UNAVAILABLE` state. Likewise, `NOT_FOUND` remains bounded by the configured search window rather than claiming an exhaustive absence from the entire WeRead catalog.
+Observed result:
 
-## Next validation
+```text
+Cross-platform ReadingIntent:
 
-The next project-level path is:
+Work: 白夜行
+Douban subject: 27112607
+WeRead status: available_exact
+Resolution: exact_match
+Examined WeRead Editions: 1
+
+Selected WeRead Edition:
+白夜行
+   Authors: 东野圭吾
+   Translators: 刘姿君
+   Publication: 南海出版公司 · 2017-07-21
+   ISBN: 9787544291163
+   WeRead bookId: 230107
+   Deep link: https://weread.qq.com/book-detail?type=1&v=65032c105382db65050e7aa
+   Search sold out: no
+
+Resolver evidence:
+Match: exact_edition
+Same Work: True
+Exact Edition: True
+Requires confirmation: False
+Reasons: exact ISBN match
+```
+
+The project therefore completed the first real end-to-end availability classification:
 
 ```text
 exact Douban Edition
 → bounded official WeRead search
-→ /book/info for candidates
-→ resolver same-Work / exact-Edition evidence
+→ /book/info
+→ resolver exact Edition evidence
 → ReadingIntent
-→ AVAILABLE_EXACT / AVAILABLE_ALTERNATIVE / UNAVAILABLE / bounded NOT_FOUND
+→ AVAILABLE_EXACT
 ```
 
-This path is implemented next and should be locally regression-tested before one low-volume live `weread resolve` validation is recorded.
+The command examined only the first WeRead Edition because it was already an exact ISBN match. No state-changing operation was performed on either platform.
+
+## Availability boundary
+
+The live search returned `Sold out: no` for WeRead `bookId=230107`. Combined with resolver-confirmed exact Edition identity, this is enough for the project's catalog-level `AVAILABLE_EXACT` mapping.
+
+The availability label is intentionally scoped: `soldout=0` is official WeRead catalog evidence that the candidate is not reported sold out, but it does not guarantee account-specific purchase/subscription entitlement in every user context.
+
+A same-Work candidate reported as `soldout=1` must not be mislabeled `NOT_FOUND`; the alignment layer preserves a separate `UNAVAILABLE` state. Likewise, `NOT_FOUND` remains bounded by the configured search window rather than claiming an exhaustive absence from the entire WeRead catalog.
+
+## Next milestone: shelf baseline and two-sided reconciliation
+
+The next milestone moves from single-book availability to account-level reconciliation:
+
+```text
+Douban reading-history baseline
+        ↕
+Work / Edition reconciliation
+        ↕
+WeRead shelf baseline
+```
+
+The official WeRead `/shelf/sync` response separates `books[]`, `albums[]`, and the `mp` article-collection entry. Only `books[]` should enter Douban book Work/Edition matching. `albums[]` and `mp` remain part of shelf accounting but must not be treated as Douban book candidates.
+
+The first shelf implementation should be read-only and local-first: fetch the full shelf once, persist a baseline, and produce a reconciliation report before any automatic state-changing operation is considered.
