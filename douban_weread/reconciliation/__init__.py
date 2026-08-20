@@ -26,6 +26,13 @@ from .policy import (
     reconcile_work_states,
     weread_reading_state_from_progress,
 )
+from .product_view import (
+    ProductBucketCount,
+    ProductReconciliationBucket,
+    ProductReconciliationItem,
+    ProductReconciliationView,
+    build_product_reconciliation_view,
+)
 from .shelf_batch import (
     DOUBAN_TO_WEREAD,
     WEREAD_TO_DOUBAN,
@@ -55,11 +62,16 @@ __all__ = [
     "FirstLoginReconciliationTickResult",
     "FirstLoginReconciliationView",
     "IncompleteHistoryBaselineError",
+    "ProductBucketCount",
+    "ProductReconciliationBucket",
+    "ProductReconciliationItem",
+    "ProductReconciliationView",
     "ReadingState",
     "ReconciliationAction",
     "ReconciliationDecision",
     "WeReadReadingState",
     "WorkStateRecord",
+    "build_product_reconciliation_view",
     "get_first_login_reconciliation_view",
     "run_first_login_reconciliation_tick",
     "reading_state_from_douban",
