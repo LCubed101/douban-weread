@@ -85,6 +85,8 @@ class DoubanToWeReadShelfMembershipCliTests(unittest.TestCase):
         self.assertIn("WeRead catalog status: available_exact", output)
         self.assertIn("Selected WeRead bookId: 9001", output)
         self.assertIn("Current shelf membership: no", output)
+        self.assertIn("User plan: add_to_weread_shelf_exact", output)
+        self.assertIn("User action required: yes", output)
 
     def test_prints_yes_and_actual_shelf_title_when_book_id_is_already_present(self) -> None:
         self.shelf.replace_full(
@@ -106,6 +108,8 @@ class DoubanToWeReadShelfMembershipCliTests(unittest.TestCase):
         self.assertIn("Selected WeRead bookId: 9001", output)
         self.assertIn("Current shelf membership: yes", output)
         self.assertIn("Current shelf title: 待读书（微信版标题）", output)
+        self.assertIn("User plan: aligned", output)
+        self.assertIn("User action required: no", output)
 
 
 if __name__ == "__main__":
