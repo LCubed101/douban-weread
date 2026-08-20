@@ -25,6 +25,24 @@ class ReconciliationAction(str, Enum):
     ASK_REREAD = "ask_reread"
 
 
+class WeReadReadingState(str, Enum):
+    UNREAD = "unread"
+    READING = "reading"
+    READ = "read"
+    UNKNOWN = "unknown"
+
+
+class CrossPlatformStateAction(str, Enum):
+    NOOP_ALIGNED = "noop_aligned"
+    SUGGEST_WISH = "suggest_wish"
+    SUGGEST_READING = "suggest_reading"
+    SUGGEST_READ = "suggest_read"
+    KEEP_HIGHER_DOUBAN_STATE = "keep_higher_douban_state"
+    ASK_REREAD = "ask_reread"
+    REVIEW_IDENTITY = "review_identity"
+    REVIEW_UNKNOWN_STATE = "review_unknown_state"
+
+
 @dataclass(slots=True)
 class WorkStateRecord:
     edition: Edition
@@ -43,6 +61,19 @@ class ReconciliationDecision:
     reason: str
 
 
+@dataclass(slots=True, frozen=True)
+class CrossPlatformStateDecision:
+    weread_state: WeReadReadingState
+    douban_state: ReadingState
+    suggested_douban_state: ReadingState
+    action: CrossPlatformStateAction
+    same_work_verified: bool
+    exact_edition_verified: bool
+    safe_to_auto_apply: bool
+    requires_user_decision: bool
+    reason: str
+
+
 def reading_state_from_douban(raw_state: str | None) -> ReadingState:
     return {
         None: ReadingState.NONE,
@@ -50,6 +81,200 @@ def reading_state_from_douban(raw_state: str | None) -> ReadingState:
         "do": ReadingState.READING,
         "collect": ReadingState.READ,
     }.get(raw_state, ReadingState.UNKNOWN)
+
+
+def weread_reading_state_from_progress(
+    progress: int,
+    *,
+    is_started: bool,
+    finish_time: int | None,
+) -> WeReadReadingState:
+    """Map official WeRead progress evidence conservatively.
+
+    `readUpdateTime` is intentionally not an input. Live `/shelf/sync`
+    validation showed that field can be populated even for a 0%-progress,
+    never-started book.
+    """
+    if not 0 <= progress <= 100:
+        return WeReadReadingState.UNKNOWN
+    if progress == 100:
+        return WeReadReadingState.READ if finish_time is not None else WeReadReadingState.UNKNOWN
+    if 0 < progress < 100:
+        return WeReadReadingState.READING
+    if progress == 0 and not is_started:
+        return WeReadReadingState.UNREAD
+    if progress == 0 and is_started:
+        return WeReadReadingState.READING
+    return WeReadReadingState.UNKNOWN
+
+
+def recommend_douban_state_from_weread(
+    weread_state: WeReadReadingState,
+    douban_state: ReadingState,
+    *,
+    same_work_verified: bool,
+    exact_edition_verified: bool,
+) -> CrossPlatformStateDecision:
+    """Recommend, but never auto-apply, a Douban state from verified WeRead evidence.
+
+    Work identity must be verified before any cross-platform state suggestion.
+    Exact Edition identity is recorded separately because a same-Work alternative
+    Edition can support a Work-level state suggestion while still requiring
+    Edition review before a concrete write.
+
+    v0.2 is deliberately read-only: every state-changing suggestion has
+    `safe_to_auto_apply=False`.
+    """
+    if not same_work_verified:
+        return CrossPlatformStateDecision(
+            weread_state=weread_state,
+            douban_state=douban_state,
+            suggested_douban_state=douban_state,
+            action=CrossPlatformStateAction.REVIEW_IDENTITY,
+            same_work_verified=False,
+            exact_edition_verified=exact_edition_verified,
+            safe_to_auto_apply=False,
+            requires_user_decision=True,
+            reason="Work identity is not verified; do not copy reading state across platforms.",
+        )
+
+    if weread_state is WeReadReadingState.UNKNOWN or douban_state is ReadingState.UNKNOWN:
+        return CrossPlatformStateDecision(
+            weread_state=weread_state,
+            douban_state=douban_state,
+            suggested_douban_state=douban_state,
+            action=CrossPlatformStateAction.REVIEW_UNKNOWN_STATE,
+            same_work_verified=True,
+            exact_edition_verified=exact_edition_verified,
+            safe_to_auto_apply=False,
+            requires_user_decision=True,
+            reason="At least one platform has an unknown reading state; fail closed.",
+        )
+
+    edition_note = (
+        " Exact Edition identity is verified."
+        if exact_edition_verified
+        else " The Work is verified, but the Edition differs or is not exact; review Edition choice before any write."
+    )
+
+    if weread_state is WeReadReadingState.UNREAD:
+        if douban_state is ReadingState.NONE:
+            return CrossPlatformStateDecision(
+                weread_state=weread_state,
+                douban_state=douban_state,
+                suggested_douban_state=ReadingState.WISH,
+                action=CrossPlatformStateAction.SUGGEST_WISH,
+                same_work_verified=True,
+                exact_edition_verified=exact_edition_verified,
+                safe_to_auto_apply=False,
+                requires_user_decision=True,
+                reason=(
+                    "The verified Work is on the WeRead shelf but has not been started; "
+                    "treat Want-to-Read as a suggestion, not an automatic equivalence."
+                    + edition_note
+                ),
+            )
+        if douban_state is ReadingState.WISH:
+            return CrossPlatformStateDecision(
+                weread_state=weread_state,
+                douban_state=douban_state,
+                suggested_douban_state=ReadingState.WISH,
+                action=CrossPlatformStateAction.NOOP_ALIGNED,
+                same_work_verified=True,
+                exact_edition_verified=exact_edition_verified,
+                safe_to_auto_apply=False,
+                requires_user_decision=False,
+                reason="WeRead is unread and Douban is already Want-to-Read; no state change is needed." + edition_note,
+            )
+        return CrossPlatformStateDecision(
+            weread_state=weread_state,
+            douban_state=douban_state,
+            suggested_douban_state=douban_state,
+            action=CrossPlatformStateAction.KEEP_HIGHER_DOUBAN_STATE,
+            same_work_verified=True,
+            exact_edition_verified=exact_edition_verified,
+            safe_to_auto_apply=False,
+            requires_user_decision=False,
+            reason="WeRead is unread; do not downgrade an existing Douban Reading/Read state." + edition_note,
+        )
+
+    if weread_state is WeReadReadingState.READING:
+        if douban_state in {ReadingState.NONE, ReadingState.WISH}:
+            return CrossPlatformStateDecision(
+                weread_state=weread_state,
+                douban_state=douban_state,
+                suggested_douban_state=ReadingState.READING,
+                action=CrossPlatformStateAction.SUGGEST_READING,
+                same_work_verified=True,
+                exact_edition_verified=exact_edition_verified,
+                safe_to_auto_apply=False,
+                requires_user_decision=True,
+                reason="WeRead has verified in-progress reading evidence; suggest upgrading Douban to Reading." + edition_note,
+            )
+        if douban_state is ReadingState.READING:
+            return CrossPlatformStateDecision(
+                weread_state=weread_state,
+                douban_state=douban_state,
+                suggested_douban_state=ReadingState.READING,
+                action=CrossPlatformStateAction.NOOP_ALIGNED,
+                same_work_verified=True,
+                exact_edition_verified=exact_edition_verified,
+                safe_to_auto_apply=False,
+                requires_user_decision=False,
+                reason="Both platforms indicate Reading; no state change is needed." + edition_note,
+            )
+        return CrossPlatformStateDecision(
+            weread_state=weread_state,
+            douban_state=douban_state,
+            suggested_douban_state=ReadingState.READ,
+            action=CrossPlatformStateAction.ASK_REREAD,
+            same_work_verified=True,
+            exact_edition_verified=exact_edition_verified,
+            safe_to_auto_apply=False,
+            requires_user_decision=True,
+            reason=(
+                "Douban already records this Work as Read while WeRead shows active reading; "
+                "treat this as a possible reread and never downgrade the historical Read state automatically."
+                + edition_note
+            ),
+        )
+
+    if weread_state is WeReadReadingState.READ:
+        if douban_state is ReadingState.READ:
+            return CrossPlatformStateDecision(
+                weread_state=weread_state,
+                douban_state=douban_state,
+                suggested_douban_state=ReadingState.READ,
+                action=CrossPlatformStateAction.NOOP_ALIGNED,
+                same_work_verified=True,
+                exact_edition_verified=exact_edition_verified,
+                safe_to_auto_apply=False,
+                requires_user_decision=False,
+                reason="Both platforms indicate Read; no state change is needed." + edition_note,
+            )
+        return CrossPlatformStateDecision(
+            weread_state=weread_state,
+            douban_state=douban_state,
+            suggested_douban_state=ReadingState.READ,
+            action=CrossPlatformStateAction.SUGGEST_READ,
+            same_work_verified=True,
+            exact_edition_verified=exact_edition_verified,
+            safe_to_auto_apply=False,
+            requires_user_decision=True,
+            reason="WeRead has verified completed-reading evidence; suggest upgrading Douban to Read." + edition_note,
+        )
+
+    return CrossPlatformStateDecision(
+        weread_state=weread_state,
+        douban_state=douban_state,
+        suggested_douban_state=douban_state,
+        action=CrossPlatformStateAction.REVIEW_UNKNOWN_STATE,
+        same_work_verified=True,
+        exact_edition_verified=exact_edition_verified,
+        safe_to_auto_apply=False,
+        requires_user_decision=True,
+        reason="The cross-platform reading state could not be reconciled safely.",
+    )
 
 
 def reconcile_work_states(
