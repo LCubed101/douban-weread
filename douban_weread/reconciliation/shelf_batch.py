@@ -24,8 +24,8 @@ WEREAD_TO_DOUBAN = "weread-to-douban"
 DOUBAN_TO_WEREAD = "douban-to-weread"
 _BATCH_DIRECTIONS = {WEREAD_TO_DOUBAN, DOUBAN_TO_WEREAD}
 _POLICY_VERSION_BY_DIRECTION = {
-    WEREAD_TO_DOUBAN: 1,
-    DOUBAN_TO_WEREAD: 2,
+    WEREAD_TO_DOUBAN: 2,
+    DOUBAN_TO_WEREAD: 3,
 }
 _MAX_BATCH_SIZE = 5
 _MAX_CATALOG_WINDOW = 10
@@ -158,8 +158,9 @@ def run_reconciliation_batch(
     book the user is currently reading.
 
     Checkpoints are scoped to both baseline timestamps and a direction-specific
-    reconciliation policy version. A policy upgrade therefore re-verifies only
-    the affected direction instead of invalidating unrelated successful work.
+    reconciliation policy version. The shared resolver-v3 title semantics affect
+    both directions, so both direction versions advance while still remaining
+    independently versioned for future one-sided policy changes.
     """
 
     if direction not in _BATCH_DIRECTIONS:
