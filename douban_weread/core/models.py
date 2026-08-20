@@ -8,6 +8,7 @@ from typing import Optional
 class WeReadStatus(str, Enum):
     AVAILABLE_EXACT = "available_exact"
     AVAILABLE_ALTERNATIVE = "available_alternative"
+    UNAVAILABLE = "unavailable"
     COMING_SOON = "coming_soon"
     NOT_FOUND = "not_found"
 
