@@ -67,6 +67,19 @@ class FakeDouban:
         return [Edition(title=title, authors=["作者"], isbn=isbn, douban_id=subject_id)]
 
 
+class SequenceClock:
+    def __init__(self, values: list[float]) -> None:
+        self.values = values
+        self.index = 0
+
+    def __call__(self) -> float:
+        if self.index >= len(self.values):
+            return self.values[-1]
+        value = self.values[self.index]
+        self.index += 1
+        return value
+
+
 class ReconciliationEvidenceScanTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
@@ -144,14 +157,55 @@ class ReconciliationEvidenceScanTests(unittest.TestCase):
         self.assertEqual({row.item_id for row in w2d}, {"7001", "7002"})
 
     def test_scan_limits_are_hard_clamped(self) -> None:
-        result = self._run(max_items=100, batch_size=100)
+        result = run_reconciliation_evidence_scan(
+            directions="both",
+            max_items=100,
+            batch_size=100,
+            max_seconds=999,
+            shelf_provider=self.shelf,
+            history_provider=self.history,
+            checkpoint_provider=self.checkpoints,
+            evidence_provider=self.evidence,
+            weread_provider=self.weread,
+            douban_provider=self.douban,
+        )
 
         self.assertEqual(result.requested_max_items, 100)
         self.assertEqual(result.effective_max_items, 20)
         self.assertEqual(result.requested_batch_size, 100)
         self.assertEqual(result.effective_batch_size, 5)
+        self.assertEqual(result.requested_max_seconds, 999.0)
+        self.assertEqual(result.effective_max_seconds, 120.0)
         self.assertEqual(result.processed_total, 4)
         self.assertEqual(result.stop_reason, "complete")
+
+    def test_time_budget_stops_between_batches_after_persisting_completed_work(self) -> None:
+        clock = SequenceClock([0.0, 0.0, 2.0, 2.0])
+        result = run_reconciliation_evidence_scan(
+            directions="both",
+            max_items=4,
+            batch_size=1,
+            max_seconds=1,
+            shelf_provider=self.shelf,
+            history_provider=self.history,
+            checkpoint_provider=self.checkpoints,
+            evidence_provider=self.evidence,
+            weread_provider=self.weread,
+            douban_provider=self.douban,
+            clock=clock,
+        )
+
+        self.assertEqual(result.processed_total, 1)
+        self.assertEqual(result.stop_reason, "time_budget")
+        self.assertEqual([step.direction for step in result.steps], [DOUBAN_TO_WEREAD])
+        self.assertEqual(result.elapsed_seconds, 2.0)
+        rows = self.evidence.list_generation(
+            DOUBAN_TO_WEREAD,
+            shelf_sync_at="shelf-v1",
+            history_sync_at="history-v1",
+            policy_version=3,
+        )
+        self.assertEqual({row.item_id for row in rows}, {"1001"})
 
 
 if __name__ == "__main__":
