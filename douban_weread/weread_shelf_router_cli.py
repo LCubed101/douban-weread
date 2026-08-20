@@ -5,12 +5,12 @@ from collections.abc import Sequence
 from typing import TextIO
 
 
-_HELP = """usage: douban-weread weread shelf [-h] {sync,status,lookup,preview,queue,verify,batch,report,scan} ...
+_HELP = """usage: douban-weread weread shelf [-h] {sync,status,lookup,preview,queue,verify,batch,report,scan,worker} ...
 
 Build, inspect, and gradually reconcile the local read-only WeRead shelf baseline.
 
 positional arguments:
-  {sync,status,lookup,preview,queue,verify,batch,report,scan}
+  {sync,status,lookup,preview,queue,verify,batch,report,scan,worker}
     sync                 Fetch the official WeRead shelf and atomically replace the local baseline.
     status               Show the local WeRead shelf baseline without network access.
     lookup               Search the local WeRead electronic-book shelf by title without network access.
@@ -20,6 +20,7 @@ positional arguments:
     batch                Process up to five pending items with baseline-scoped checkpoints; read-only.
     report               Summarize current persisted reconciliation evidence locally; no network access.
     scan                 Fill a bounded amount of persisted reconciliation evidence with visible progress; read-only.
+    worker               Inspect or advance the persistent first-login reconciliation worker state machine.
 
 options:
   -h, --help             show this help message and exit
@@ -50,6 +51,11 @@ def run(
         from douban_weread.weread_shelf_scan_cli import run as run_scan
 
         return run_scan(args[1:])
+
+    if args[0] == "worker":
+        from douban_weread.weread_shelf_worker_cli import run as run_worker
+
+        return run_worker(args[1:])
 
     from douban_weread.weread_shelf_cli import run as run_shelf
 
