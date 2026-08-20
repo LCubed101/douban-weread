@@ -36,7 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="douban-weread weread shelf batch",
         description=(
-            "Process a tiny read-only reconciliation batch with local baseline-scoped checkpoints. "
+            "Process a tiny read-only reconciliation batch with local baseline- and policy-scoped checkpoints. "
             "One invocation handles at most five items and never mutates either platform."
         ),
     )
@@ -68,7 +68,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--catalog-limit",
         type=int,
         default=5,
-        help="Douban→WeRead: maximum official WeRead catalog candidates per item (default: 5).",
+        help=(
+            "Douban→WeRead: base official catalog window (default: 5). "
+            "Active Douban Reading items automatically use up to 10 candidates."
+        ),
     )
     return parser
 
@@ -116,6 +119,7 @@ def run(
     print(f"Direction: {result.direction}", file=stdout)
     print(f"Douban baseline: {result.generation.history_sync_at}", file=stdout)
     print(f"WeRead shelf baseline: {result.generation.shelf_sync_at}", file=stdout)
+    print(f"Reconciliation policy: v{result.generation.policy_version}", file=stdout)
     print(f"Candidate queue: {result.candidate_total}", file=stdout)
     print(f"Already checkpointed in this generation: {result.already_completed}", file=stdout)
     print(f"Pending before batch: {result.pending_before}", file=stdout)
@@ -128,7 +132,7 @@ def run(
         print(f"Batch size: {result.effective_limit}", file=stdout)
 
     if not result.processed:
-        print("\nNo pending items were processed for this baseline generation.", file=stdout)
+        print("\nNo pending items were processed for this baseline/policy generation.", file=stdout)
     elif result.direction == WEREAD_TO_DOUBAN:
         for index, item in enumerate(result.processed, start=1):
             verification = item.shelf_verification
@@ -155,7 +159,7 @@ def run(
             print(f"   User plan: {plan.kind.value}", file=stdout)
             print(f"   Summary: {plan.summary}", file=stdout)
             print(f"   User action required: {'yes' if plan.requires_user_action else 'no'}", file=stdout)
-            print("   Checkpointed for this baseline: yes", file=stdout)
+            print("   Checkpointed for this baseline/policy: yes", file=stdout)
     else:
         for index, item in enumerate(result.processed, start=1):
             alignment = item.catalog_alignment
@@ -166,6 +170,8 @@ def run(
             print(f"   Douban subject: {item.item_id}", file=stdout)
             if item.source_state:
                 print(f"   Douban state: {item.source_state}", file=stdout)
+            if item.catalog_search_limit_used is not None:
+                print(f"   Catalog search window: <= {item.catalog_search_limit_used}", file=stdout)
             print(f"   WeRead catalog status: {intent.weread_status.value}", file=stdout)
             print(f"   Resolution: {intent.resolution.value}", file=stdout)
             if intent.selected_edition is not None:
@@ -189,12 +195,12 @@ def run(
             print(f"   User plan: {plan.kind.value}", file=stdout)
             print(f"   Summary: {plan.summary}", file=stdout)
             print(f"   User action required: {'yes' if plan.requires_user_action else 'no'}", file=stdout)
-            print("   Checkpointed for this baseline: yes", file=stdout)
+            print("   Checkpointed for this baseline/policy: yes", file=stdout)
 
     print(f"\nProcessed this batch: {len(result.processed)}", file=stdout)
     print(f"Remaining pending for this generation: {result.remaining_after}", file=stdout)
     print(
-        "No mutation is performed. Checkpoints only prevent repeated verification against the same pair of local baselines.",
+        "No mutation is performed. Checkpoints only prevent repeated verification against the same baselines and reconciliation policy version.",
         file=stdout,
     )
     return EXIT_OK
