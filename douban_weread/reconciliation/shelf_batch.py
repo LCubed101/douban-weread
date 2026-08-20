@@ -13,6 +13,7 @@ from douban_weread.reconciliation.shelf_verify import (
     verify_shelf_book,
 )
 from douban_weread.storage import (
+    CURRENT_RECONCILIATION_POLICY_VERSION,
     IndexedHistoryEntry,
     IndexedWeReadShelfBook,
     ReconciliationCheckpointStore,
@@ -24,6 +25,7 @@ WEREAD_TO_DOUBAN = "weread-to-douban"
 DOUBAN_TO_WEREAD = "douban-to-weread"
 _BATCH_DIRECTIONS = {WEREAD_TO_DOUBAN, DOUBAN_TO_WEREAD}
 _MAX_BATCH_SIZE = 5
+_MAX_CATALOG_WINDOW = 10
 
 
 class BaselineStatus(Protocol):
@@ -76,6 +78,7 @@ class CheckpointProvider(Protocol):
         *,
         shelf_sync_at: str,
         history_sync_at: str,
+        policy_version: int,
     ) -> set[str]: ...
 
     def mark_completed(
@@ -86,6 +89,7 @@ class CheckpointProvider(Protocol):
         shelf_sync_at: str,
         history_sync_at: str,
         outcome: str,
+        policy_version: int,
         recorded_at: str | None = None,
     ) -> None: ...
 
@@ -94,6 +98,7 @@ class CheckpointProvider(Protocol):
 class BatchGeneration:
     shelf_sync_at: str
     history_sync_at: str
+    policy_version: int
 
 
 @dataclass(slots=True)
@@ -106,6 +111,7 @@ class BatchItemResult:
     shelf_verification: ShelfVerificationResult | None = None
     catalog_alignment: WeReadAlignmentResult | None = None
     selected_shelf_book: IndexedWeReadShelfBook | None = None
+    catalog_search_limit_used: int | None = None
 
 
 @dataclass(slots=True)
@@ -144,8 +150,13 @@ def run_reconciliation_batch(
     Candidate ordering is product-oriented rather than purely alphabetical:
     active Douban READING items are verified before WISH items, while non-private
     WeRead shelf items already flagged finished are verified before unfinished
-    items. This surfaces higher-value reading-state differences earlier without
-    changing the safety or checkpoint model.
+    items. Active Douban READING items also use a wider bounded WeRead catalog
+    window (up to 10 candidates) because a false negative is more costly for a
+    book the user is currently reading.
+
+    Checkpoints are scoped to both baseline timestamps and the reconciliation
+    policy version. A policy upgrade therefore re-verifies stale conclusions
+    without requiring either platform baseline to be refreshed.
     """
 
     if direction not in _BATCH_DIRECTIONS:
@@ -165,6 +176,7 @@ def run_reconciliation_batch(
     generation = BatchGeneration(
         shelf_sync_at=shelf_status.last_full_sync_at,
         history_sync_at=history_status.last_full_sync_at,
+        policy_version=CURRENT_RECONCILIATION_POLICY_VERSION,
     )
     report = build_shelf_preview(
         history_provider.all_entries(),
@@ -176,6 +188,7 @@ def run_reconciliation_batch(
         direction,
         shelf_sync_at=generation.shelf_sync_at,
         history_sync_at=generation.history_sync_at,
+        policy_version=generation.policy_version,
     )
 
     if direction == WEREAD_TO_DOUBAN:
@@ -207,6 +220,7 @@ def run_reconciliation_batch(
                 book.book_id,
                 shelf_sync_at=generation.shelf_sync_at,
                 history_sync_at=generation.history_sync_at,
+                policy_version=generation.policy_version,
                 outcome=outcome,
             )
             processed.append(
@@ -230,16 +244,23 @@ def run_reconciliation_batch(
         pending = [entry for entry in candidates if entry.subject_id not in completed]
         selected = pending[:effective_limit]
         processed = []
+        base_catalog_limit = max(1, min(weread_catalog_limit, _MAX_CATALOG_WINDOW))
         for entry in selected:
             source = douban_provider.get_by_subject_id(entry.subject_id)
             if source is None:
                 raise ValueError(
                     f"Douban subject {entry.subject_id} could not be resolved to full Edition metadata."
                 )
+
+            catalog_limit_used = (
+                _MAX_CATALOG_WINDOW
+                if entry.state == "do" and base_catalog_limit < _MAX_CATALOG_WINDOW
+                else base_catalog_limit
+            )
             alignment = align_to_weread(
                 source,
                 weread_provider,
-                limit=max(1, min(weread_catalog_limit, 10)),
+                limit=catalog_limit_used,
             )
             selected_shelf_book = None
             selected_edition = alignment.intent.selected_edition
@@ -252,6 +273,7 @@ def run_reconciliation_batch(
                 entry.subject_id,
                 shelf_sync_at=generation.shelf_sync_at,
                 history_sync_at=generation.history_sync_at,
+                policy_version=generation.policy_version,
                 outcome=outcome,
             )
             processed.append(
@@ -263,6 +285,7 @@ def run_reconciliation_batch(
                     source_state=entry.state,
                     catalog_alignment=alignment,
                     selected_shelf_book=selected_shelf_book,
+                    catalog_search_limit_used=catalog_limit_used,
                 )
             )
 
