@@ -1,6 +1,6 @@
 # Work-Level Reading-State Reconciliation
 
-Status: **implemented and live-validated for bounded Douban candidate scanning; full-history indexing still required for exhaustive forgotten-history detection**.
+Status: **history-aware reconciliation implemented, regression-tested, and live-validated through a verified real `WISH` mutation**.
 
 ## Why this layer exists
 
@@ -12,12 +12,19 @@ Therefore the safe mutation path is:
 
 ```text
 Resolve exact target Edition
-→ inspect existing states for the same Work
+→ query complete local reading-history baseline
+→ shortlist relevant historical subject IDs
+→ lazily resolve full Edition metadata
+→ verify same Work
+→ combine historical + current provider state conservatively
 → reconcile state + edition differences
 → require confirmation
 → mutate
 → verify saved state
+→ update local index
 ```
+
+The complete Douban history is never sent to an LLM and is not refetched for every new book.
 
 ## Internal reading-state abstraction
 
@@ -31,28 +38,52 @@ Current Douban mapping:
 | `collect` | `READ` |
 | unrecognized value | `UNKNOWN` |
 
-Future WeRead states will be mapped into the same provider-independent layer only after the actual WeRead capabilities are verified.
-
-## Read is sticky
-
-State precedence is used to prevent accidental downgrade:
+State precedence prevents accidental downgrade:
 
 ```text
 READ > READING > WISH > NONE
 ```
 
-This does **not** mean states should be silently copied between platforms or editions.
+If the local snapshot and a current provider read disagree, reconciliation keeps the stronger known state. An unrecognized provider state remains `UNKNOWN` and fails closed.
 
-Examples:
+This does **not** silently copy state between editions or infer that two editions are the same Work.
 
-- target Edition already `READ` → no-op; never downgrade to `WISH`
-- target Edition already `READING` → no-op; never downgrade to `WISH`
-- target Edition already `WISH` → no duplicate write
-- another Edition of the same Work is `READ` → ask whether this is a reread
-- another Edition is `READING` → block a competing automatic `WISH`
-- another Edition is `WISH` → treat as an edition mismatch requiring review
-- unknown provider state → fail closed
-- no known state for the Work → eligible for an explicitly confirmed `WISH`
+## History-aware discovery
+
+The current inspector uses two discovery paths:
+
+```text
+A. live Douban title search (up to 20 candidates)
+B. local Reading History Index title shortlist
+```
+
+For local history candidates, the lightweight SQLite row contains only `subject_id + title + state`. Before a candidate may affect reconciliation, the inspector fetches full Edition metadata for that subject and runs the normal resolver.
+
+Therefore:
+
+```text
+local title similarity
+≠
+same Work
+≠
+same Edition
+≠
+write authorization
+```
+
+Only a candidate that survives full same-Work verification contributes a `WorkStateRecord`.
+
+## Complete-baseline requirement
+
+`inspect` and confirmed `wish` require a complete, current-schema local history baseline.
+
+If the baseline is missing or invalidated, reconciliation fails closed with an instruction to run:
+
+```bash
+douban-weread history sync --full
+```
+
+This prevents the old bounded title-search path from being silently treated as exhaustive write safety.
 
 ## CLI
 
@@ -68,7 +99,102 @@ Inspect same-Work state history without writing:
 douban-weread inspect --subject 25837854 --limit 20
 ```
 
-A representative result is:
+The default live candidate limit is 20.
+
+The state-changing path is:
+
+```bash
+douban-weread wish --subject 25837854 --confirm
+```
+
+Before a write, the command requires:
+
+1. a complete local history baseline;
+2. target Edition resolution;
+3. local-history candidate discovery;
+4. lazy full Edition resolution for shortlisted history subjects;
+5. same-Work verification;
+6. conservative state reconciliation;
+7. explicit `--confirm`.
+
+After a verified write succeeds, the local history index is updated immediately so project-owned mutations do not wait for the next full sync.
+
+## Reconciliation outcomes
+
+- target Edition already `READ` → no-op; never downgrade to `WISH`
+- target Edition already `READING` → no-op; never downgrade to `WISH`
+- target Edition already `WISH` → no duplicate write
+- another Edition of the same Work is `READ` → `ASK_REREAD`
+- another Edition is `READING` → block competing `WISH`
+- another Edition is `WISH` → edition mismatch review
+- any `UNKNOWN` state → fail closed
+- no conflicting state → `SAFE_TO_WISH`, still requiring explicit confirmation
+
+## Reading History Index validation — 2026-08-19
+
+The prerequisite local history foundation was live-validated on the stacked base branch:
+
+```text
+Ran 98 tests in 0.066s
+OK
+
+History baseline: complete
+Total: 1747
+Want-to-Read: 1511
+Reading: 40
+Read: 196
+```
+
+After Cookie removal, local positive lookups returned:
+
+```text
+白夜行
+- READ | subject 3259440 | 白夜行
+- READ | subject 10554308 | 白夜行
+
+素食者
+- READ | subject 35534519 | 素食者
+```
+
+PIT-020 through PIT-022 document the parser and candidate-quality failures found during that validation.
+
+## History-aware reconciliation validation — 2026-08-20
+
+The full branch regression suite passed:
+
+```text
+Ran 103 tests in 0.240s
+OK
+```
+
+After the temporary provider-access event recorded as PIT-023 recovered, the live validation used target subject `27112607` (`白夜行`, 刘姿君, 南海出版公司, 2017-07, ISBN `9787544291163`).
+
+A direct resolver check confirmed historical subject `10554308` is the same Work but an alternative Edition:
+
+```text
+TARGET: 白夜行 ['刘姿君'] 南海出版公司 2017-07 9787544291163
+HISTORY: 白夜行 ['刘姿君'] 南海出版公司 2013-01 9787544258609
+same_work: True
+kind: alternative_edition
+requires_confirmation: False
+differences: ['ISBN differs', 'publication year differs'] []
+```
+
+The read-only inspection intentionally constrained live title discovery to one candidate:
+
+```bash
+douban-weread inspect --subject 27112607 --limit 1
+```
+
+Observed records:
+
+```text
+NONE [target] | subject 27112607 | 刘姿君 · 南海出版公司 · 2017-07 · 9787544291163
+READ | subject 10554308 | 刘姿君 · 南海出版公司 · 2013-01 · 9787544258609
+READ | subject 3259440 | 刘姿君 · 南海出版公司 · 2008-09 · 9787544242516
+```
+
+Observed decision:
 
 ```text
 Decision: ask_reread
@@ -76,100 +202,60 @@ Safe to write Want-to-Read: False
 Requires user decision: True
 ```
 
-The `wish` command now performs the same reconciliation before mutation:
+This demonstrates the intended safety property: a currently unmarked target Edition is not considered safe to mark Want-to-Read when other same-Work Editions exist in the complete local history as `READ`. The historical subjects were supplied by the local index despite the deliberately tiny live-search bound, then resolved to full Edition metadata and verified as the same Work before affecting the decision.
 
-```bash
-douban-weread wish --subject 25837854 --confirm
-```
+A second live case used subject `37252290` (`心智简史`) and correctly returned `NOOP_ALREADY_WISH`, validating exact-target idempotency against the real provider.
 
-If reconciliation finds an existing `READ`, `READING`, other-edition `WISH`, or unknown state, the command fails closed and performs no write.
-
-## Current discovery strategy
-
-The first implementation:
-
-1. fetches the exact target subject;
-2. searches Douban by the target title;
-3. uses the Edition resolver to keep only candidates classified as the same Work;
-4. reads authenticated interest state for those candidate subjects;
-5. applies the reconciliation policy.
-
-The live inspector supports up to 20 title-search candidates. This is intentionally conservative but **not exhaustive**. Public title search may not surface every historical edition a user has ever marked.
-
-Therefore `SAFE_TO_WISH` currently means:
-
-> No conflicting state was found among the same-Work editions discovered by the current provider scan.
-
-It does not yet mean that the user's complete Douban history has been exhaustively indexed.
-
-## Live validation — 2026-08-19
-
-The reconciliation branch passed:
+A third live case used subject `38540433` (`听妈妈的话`, 上海译文出版社, 2026-08, ISBN `9787580702531`). The read-only preflight returned:
 
 ```text
-Ran 71 tests in 0.016s
-OK
-```
-
-A real read-only inspection was then run for subject `25837854` (`荷马史诗·奥德赛`, 王焕生, 人民文学出版社, 2015-06, ISBN `9787020102792`) with `--limit 20`.
-
-The scan resolved six same-Work 王焕生 / 人民文学出版社 editions. All six returned `NONE`, producing:
-
-```text
+NONE [target] | subject 38540433 | 上海译文出版社 · 2026-08 · 9787580702531
 Decision: safe_to_wish
 Safe to write Want-to-Read: True
 Requires user decision: True
 ```
 
-This validates the bounded live path from exact subject lookup through same-Work filtering and authenticated per-edition state reads to reconciliation. It does **not** validate exhaustive reading-history coverage.
+After explicit user confirmation, the project executed:
 
-## Next reliability layer: local reading-history index
-
-To solve the "I may already have read this but forgot" case robustly, the next stage should ingest the user's own Douban reading lists and maintain a local history index keyed by Work and Edition.
-
-Conceptually:
-
-```text
-Douban WISH list
-Douban READING list
-Douban READ list
-        ↓
-normalized Editions
-        ↓
-Work resolution
-        ↓
-local reading-history index
-        ↓
-new capture / WeRead candidate
-        ↓
-reconciliation before mutation
+```bash
+douban-weread wish --subject 38540433 --confirm
 ```
 
-This history index should preserve the original platform state and Edition rather than collapsing all records into one title-level flag.
-
-## Future cross-platform shape
+and observed:
 
 ```text
-Work
-├── Editions
-├── Douban states
-│   └── Edition → NONE / WISH / READING / READ
-├── WeRead states
-│   └── Edition → provider-verified state
-└── Reconciliation
-    ├── state mismatch
-    ├── edition mismatch
-    ├── already read / reread detection
-    └── recommended action
+Douban subject 38540433 is now marked Want-to-Read and the saved state was verified.
 ```
 
-WeRead state names must not be assumed until the provider is live-verified.
+After the Cookie was removed, a local-only lookup returned:
+
+```text
+WISH | subject 38540433 | 听妈妈的话
+```
+
+This live-validates the complete intended mutation path:
+
+```text
+SAFE_TO_WISH
+→ explicit confirmation
+→ remote write
+→ remote read-back verification
+→ local SQLite update
+```
+
+## Known boundary
+
+The local shortlist is still title-based candidate discovery. It greatly improves forgotten-history coverage but cannot prove that every alternate title for the same Work will be discovered. Full Work identity remains the resolver's responsibility after candidate discovery.
+
+Future improvements may add more local discovery signals (author/title aliases or provider-verified Work links) without sending the full history to an LLM.
 
 ## Safety rules
 
 - Never downgrade a known `READ` or `READING` state to `WISH` automatically.
-- Never treat a same-title different Edition as a harmless duplicate.
 - Never let title-only similarity authorize mutation.
-- Fail closed when state discovery fails or returns an unknown state.
-- Preserve all observed Edition identities and provider states for future reconciliation.
-- A real write still requires explicit confirmation and post-write verification.
+- Require a complete local history baseline before a confirmed write.
+- Resolve historical subject IDs to full Edition metadata before same-Work decisions.
+- Fail closed when a shortlisted historical candidate cannot be resolved.
+- Fail closed on unknown provider states.
+- Preserve the stronger known state when local snapshot and current provider state disagree.
+- A real write requires explicit confirmation and post-write verification.

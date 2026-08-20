@@ -1,0 +1,190 @@
+# History-aware reconciliation validation
+
+## 2026-08-19 — local regression suite
+
+Branch: `agent/history-aware-reconciliation`
+
+The complete suite passed locally before live provider validation:
+
+```text
+Ran 103 tests in 0.240s
+OK
+```
+
+The run includes coverage for:
+
+- historical same-Work editions missing from live title search;
+- incomplete history baseline fail-closed behavior;
+- historical `READ` surviving a weaker live `NONE`;
+- newer live `READ` overriding an older local `WISH`;
+- CLI `inspect` refusing an incomplete baseline;
+- verified project-owned `wish` updating the local index only after remote write verification.
+
+No state-changing Douban write was performed.
+
+## 2026-08-19 — temporary provider 403 during planned live validation
+
+The first planned read-only `白夜行` validation was interrupted by provider access failures. With `DOUBAN_COOKIE` unset, both public title search and a single exact subject-detail fetch returned HTTP 403 from the same local runtime.
+
+Because exact subject detail was also rejected, this was broader than a `subject_search`-only failure. The event is documented as `docs/pitfalls/PIT-023-public-read-403-after-history-sync.md`.
+
+The validation was stopped rather than retried in a loop. No bypass or anti-bot evasion was attempted.
+
+## 2026-08-20 — provider recovery and live history-aware reconciliation
+
+After waiting overnight, one low-volume exact-subject probe was run with `DOUBAN_COOKIE` unset and no provider-code change:
+
+```text
+白夜行 南海出版公司 2017-07 27112607
+```
+
+This confirmed that exact public subject access had recovered. PIT-023 therefore remains classified as a temporary provider-access event with an unconfirmed trigger rather than a permanent parser or endpoint failure.
+
+A second low-volume read-only comparison then resolved the target Edition and one historical Edition:
+
+```text
+TARGET: 白夜行 ['刘姿君'] 南海出版公司 2017-07 9787544291163
+HISTORY: 白夜行 ['刘姿君'] 南海出版公司 2013-01 9787544258609
+same_work: True
+kind: alternative_edition
+requires_confirmation: False
+differences: ['ISBN differs', 'publication year differs'] []
+```
+
+This validates that subject `27112607` and historical subject `10554308` are the same Work but different Editions.
+
+The authenticated live reconciliation test then used a deliberately tiny live-search bound:
+
+```bash
+douban-weread inspect --subject 27112607 --limit 1
+```
+
+Observed same-Work states:
+
+```text
+NONE [target] | subject 27112607 | 刘姿君 · 南海出版公司 · 2017-07 · 9787544291163
+READ | subject 10554308 | 刘姿君 · 南海出版公司 · 2013-01 · 9787544258609
+READ | subject 3259440 | 刘姿君 · 南海出版公司 · 2008-09 · 9787544242516
+```
+
+Observed decision:
+
+```text
+Decision: ask_reread
+Safe to write Want-to-Read: False
+Requires user decision: True
+Reason: Another edition of the same Work is already marked read. Treat the new target as a possible reread and ask before changing state.
+```
+
+The target itself was currently unmarked, while two older same-Work Editions were present in the complete local history baseline as `READ`. With the live title-search limit intentionally reduced to `1`, those historical records were still discovered from SQLite, lazily resolved to full Edition metadata, verified as the same Work, and included in reconciliation.
+
+This live run validates the intended forgotten-history safety path:
+
+```text
+exact target Edition
+→ bounded live discovery
++ complete local history shortlist
+→ lazy historical Edition resolution
+→ same-Work verification
+→ historical READ detection
+→ ASK_REREAD
+→ write blocked
+```
+
+The Cookie was removed from the shell after the read-only test. No state-changing Douban write was performed.
+
+## 2026-08-20 — already-WISH no-op validation
+
+A second real target was selected for the planned first write candidate: subject `37252290` (`心智简史`, 汪祚军 / 吕飒飒, 浙江科学技术出版社, 2025-03, ISBN `9787573917072`).
+
+The authenticated read-only inspection again used a tiny live-search bound:
+
+```bash
+douban-weread inspect --subject 37252290 --limit 1
+```
+
+Observed state and decision:
+
+```text
+WISH [target] | subject 37252290 | 汪祚军, 吕飒飒 · 浙江科学技术出版社 · 2025-03 · 9787573917072
+
+Decision: noop_already_wish
+Safe to write Want-to-Read: False
+Requires user decision: False
+Reason: The selected edition is already marked Want-to-Read.
+```
+
+This validates the exact-target no-op path against the live provider: a target already marked `WISH` is not treated as `SAFE_TO_WISH` and no duplicate mutation is authorized.
+
+The Cookie was removed from the shell after the read-only test. No state-changing Douban write was performed.
+
+## 2026-08-20 — first verified state-changing `wish`
+
+A third real target was selected for the first state-changing validation: subject `38540433` (`听妈妈的话`, 李凡, 上海译文出版社, 2026-08, ISBN `9787580702531`).
+
+The authenticated read-only preflight used a tiny live-search bound:
+
+```bash
+douban-weread inspect --subject 38540433 --limit 1
+```
+
+Observed state and decision:
+
+```text
+NONE [target] | subject 38540433 | 上海译文出版社 · 2026-08 · 9787580702531
+
+Decision: safe_to_wish
+Safe to write Want-to-Read: True
+Requires user decision: True
+Reason: No existing Want-to-Read, reading, or read state was found for the resolved Work. The selected edition may proceed to an explicitly confirmed Want-to-Read write.
+```
+
+After explicit user confirmation, the real write command was executed:
+
+```bash
+douban-weread wish --subject 38540433 --confirm
+```
+
+Observed result:
+
+```text
+Douban subject 38540433 is now marked Want-to-Read and the saved state was verified.
+```
+
+This confirms that the remote mutation succeeded and the provider's post-write read-back verification observed the saved `WISH` state.
+
+The Cookie was then removed from the shell, and the local SQLite baseline was checked without any network request:
+
+```bash
+douban-weread history lookup "听妈妈的话"
+```
+
+Observed local state:
+
+```text
+Local history candidates for "听妈妈的话":
+- WISH | subject 38540433 | 听妈妈的话
+```
+
+This validates the complete project-owned write path:
+
+```text
+SAFE_TO_WISH reconciliation
+→ explicit user confirmation
+→ remote Douban mutation
+→ post-write remote read-back verification
+→ local SQLite update
+→ local WISH lookup succeeds
+```
+
+The write was limited to the explicitly selected subject `38540433`; no other reading state was changed.
+
+## Status
+
+History-aware reconciliation is now live-validated for three important paths:
+
+- forgotten-history safety: another Edition of the same Work is already `READ` → `ASK_REREAD`, write blocked;
+- exact-target idempotency: target is already `WISH` → `NOOP_ALREADY_WISH`, no duplicate write;
+- safe mutation: target is `NONE`, no conflicting same-Work history exists → explicit confirmed `wish` succeeds, remote state is read-back verified, and local SQLite is updated to `WISH`.
+
+The Douban-side reconciliation and project-owned Want-to-Read write loop is therefore live-validated end to end. The next product layer should focus on WeRead search / availability and cross-platform Edition alignment rather than expanding this Douban foundation further.

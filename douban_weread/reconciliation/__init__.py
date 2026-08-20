@@ -1,4 +1,4 @@
-from .douban import DoubanWorkInspector
+from .douban import DoubanWorkInspector, IncompleteHistoryBaselineError
 from .policy import (
     ReadingState,
     ReconciliationAction,
@@ -10,6 +10,7 @@ from .policy import (
 
 __all__ = [
     "DoubanWorkInspector",
+    "IncompleteHistoryBaselineError",
     "ReadingState",
     "ReconciliationAction",
     "ReconciliationDecision",
