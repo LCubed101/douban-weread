@@ -101,17 +101,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     preview = subparsers.add_parser(
         "preview",
-        help="Compare the complete local Douban and WeRead baselines by exact normalized title.",
+        help="Compare local Douban active intent and WeRead shelf by exact normalized title.",
         description=(
-            "Local-only two-sided reconciliation preview. Exact normalized title overlap is a shortlist signal only; "
-            "it does not claim same Work/Edition identity and never changes either platform."
+            "Local-only two-sided reconciliation preview. Douban WISH/READING are current reading intent; "
+            "READ remains historical evidence and is not expected to stay on the current WeRead shelf. "
+            "Exact normalized title overlap is still only a shortlist signal."
         ),
     )
     preview.add_argument(
         "--limit",
         type=int,
         default=10,
-        help="Maximum examples shown for each one-sided/conflict section (default: 10).",
+        help="Maximum examples shown for each candidate/conflict section (default: 10).",
     )
     return parser
 
@@ -234,31 +235,45 @@ def run(
             return EXIT_PROVIDER_ERROR
 
         example_limit = max(1, min(args.limit, 100))
+        active_total = report.douban_wish + report.douban_reading
         print("Local two-sided reconciliation preview:", file=stdout)
         print(f"Douban history entries: {report.douban_total}", file=stdout)
+        print(f"  Active intents (wish + reading): {active_total}", file=stdout)
+        print(f"    Want-to-Read: {report.douban_wish}", file=stdout)
+        print(f"    Reading: {report.douban_reading}", file=stdout)
+        print(f"  Read history (not expected on current shelf): {report.douban_read}", file=stdout)
         print(f"WeRead electronic shelf books: {report.weread_total}", file=stdout)
-        print(f"Shared exact normalized title keys: {report.shared_title_keys}", file=stdout)
+        print(f"  Shelf books marked finished: {report.weread_finished}", file=stdout)
+        print(f"  Shelf books with read-activity timestamp: {report.weread_with_read_activity}", file=stdout)
+        print(f"Shared exact normalized title keys (all Douban states): {report.shared_title_keys}", file=stdout)
+        print(f"Shared title keys involving active Douban intent: {report.active_shared_title_keys}", file=stdout)
         print(
-            f"Douban entries with exact-title shelf candidate: {report.douban_entries_with_exact_title}",
+            f"Active Douban entries with exact-title shelf candidate: {report.active_douban_entries_with_exact_title}",
             file=stdout,
         )
         print(
-            f"WeRead books with exact-title Douban candidate: {report.weread_books_with_exact_title}",
+            f"Active Douban-only by exact title: {len(report.active_douban_only_entries)}",
             file=stdout,
         )
-        print(f"Douban-only by exact title: {len(report.douban_only_entries)}", file=stdout)
-        print(f"WeRead-only by exact title: {len(report.weread_only_books)}", file=stdout)
+        print(
+            f"WeRead-only vs any Douban state by exact title: {len(report.weread_only_books)}",
+            file=stdout,
+        )
+        print(
+            f"WeRead shelf books overlapping Douban READ history by exact title: {len(report.read_history_overlap_books)}",
+            file=stdout,
+        )
         print(f"Ambiguous shared title keys: {report.ambiguous_shared_title_keys}", file=stdout)
         print(f"Possible finished/state conflicts: {len(report.possible_state_conflicts)}", file=stdout)
 
         if report.weread_only_books:
-            print("\nWeRead-only examples (title-only preview):", file=stdout)
+            print("\nWeRead shelf with no exact-title Douban history candidate:", file=stdout)
             for book in report.weread_only_books[:example_limit]:
                 print(f"- {format_lookup_candidate(book)}", file=stdout)
 
-        if report.douban_only_entries:
-            print("\nDouban-only examples (title-only preview):", file=stdout)
-            for entry in report.douban_only_entries[:example_limit]:
+        if report.active_douban_only_entries:
+            print("\nActive Douban intent with no exact-title shelf candidate:", file=stdout)
+            for entry in report.active_douban_only_entries[:example_limit]:
                 print(
                     f"- subject {entry.subject_id} | {entry.title} | state: {entry.state}",
                     file=stdout,
@@ -274,7 +289,9 @@ def run(
                 )
 
         print(
-            "\nPreview only: exact title overlap is not Work/Edition verification. No mutation is authorized by this report.",
+            "\nPreview only: exact title overlap is not Work/Edition verification. "
+            "READ history missing from the current shelf is not treated as a sync gap. "
+            "No mutation is authorized by this report.",
             file=stdout,
         )
         return EXIT_OK
