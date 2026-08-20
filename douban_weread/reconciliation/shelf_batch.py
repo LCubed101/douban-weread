@@ -298,7 +298,7 @@ def run_reconciliation_batch(
                 limit=catalog_limit_used,
             )
             selected_shelf_book = None
-            selected_edition = alignment.intent.selected_ition if False else alignment.intent.selected_edition
+            selected_edition = alignment.intent.selected_edition
             if selected_edition is not None and selected_edition.weread_id:
                 selected_shelf_book = shelf_provider.get(selected_edition.weread_id)
 
