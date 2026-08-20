@@ -140,6 +140,12 @@ def run_reconciliation_batch(
     parser failures propagate immediately instead of being converted to empty
     results; any earlier successful items remain checkpointed so a retry can
     resume from the next pending item.
+
+    Candidate ordering is product-oriented rather than purely alphabetical:
+    active Douban READING items are verified before WISH items, while non-private
+    WeRead shelf items already flagged finished are verified before unfinished
+    items. This surfaces higher-value reading-state differences earlier without
+    changing the safety or checkpoint model.
     """
 
     if direction not in _BATCH_DIRECTIONS:
@@ -177,6 +183,7 @@ def run_reconciliation_batch(
             report.weread_only_books,
             key=lambda book: (
                 bool(book.secret),
+                not bool(book.finish_reading),
                 normalize_history_title(book.title),
                 book.book_id,
             ),
@@ -214,7 +221,11 @@ def run_reconciliation_batch(
     else:
         candidates = sorted(
             report.active_douban_only_entries,
-            key=lambda entry: (normalize_history_title(entry.title), entry.subject_id),
+            key=lambda entry: (
+                0 if entry.state == "do" else 1,
+                normalize_history_title(entry.title),
+                entry.subject_id,
+            ),
         )
         pending = [entry for entry in candidates if entry.subject_id not in completed]
         selected = pending[:effective_limit]
