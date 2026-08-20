@@ -6,6 +6,13 @@ from .evidence_scan import (
     normalize_scan_directions,
     run_reconciliation_evidence_scan,
 )
+from .onboarding import (
+    FirstLoginReconciliationPhase,
+    FirstLoginReconciliationTickResult,
+    FirstLoginReconciliationView,
+    get_first_login_reconciliation_view,
+    run_first_login_reconciliation_tick,
+)
 from .policy import (
     CrossPlatformStateAction,
     CrossPlatformStateDecision,
@@ -44,12 +51,17 @@ __all__ = [
     "EvidenceScanGenerationChangedError",
     "EvidenceScanResult",
     "EvidenceScanStep",
+    "FirstLoginReconciliationPhase",
+    "FirstLoginReconciliationTickResult",
+    "FirstLoginReconciliationView",
     "IncompleteHistoryBaselineError",
     "ReadingState",
     "ReconciliationAction",
     "ReconciliationDecision",
     "WeReadReadingState",
     "WorkStateRecord",
+    "get_first_login_reconciliation_view",
+    "run_first_login_reconciliation_tick",
     "reading_state_from_douban",
     "recommend_douban_state_from_weread",
     "reconcile_work_states",
