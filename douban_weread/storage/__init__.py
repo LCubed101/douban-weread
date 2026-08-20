@@ -11,6 +11,11 @@ from .reconciliation_checkpoint import (
     ReconciliationCheckpointStore,
     default_reconciliation_db_path,
 )
+from .reconciliation_evidence import (
+    ReconciliationEvidence,
+    ReconciliationEvidenceStore,
+    default_reconciliation_evidence_db_path,
+)
 from .weread_shelf import (
     IndexedWeReadShelfBook,
     WeReadShelfIndex,
@@ -29,6 +34,9 @@ __all__ = [
     "ReconciliationCheckpoint",
     "ReconciliationCheckpointStore",
     "default_reconciliation_db_path",
+    "ReconciliationEvidence",
+    "ReconciliationEvidenceStore",
+    "default_reconciliation_evidence_db_path",
     "IndexedWeReadShelfBook",
     "WeReadShelfIndex",
     "WeReadShelfIndexStatus",
