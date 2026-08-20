@@ -101,6 +101,15 @@ class CheckpointProvider(Protocol):
 class EvidenceProvider(Protocol):
     def upsert(self, evidence: ReconciliationEvidence) -> None: ...
 
+    def list_generation(
+        self,
+        direction: str,
+        *,
+        shelf_sync_at: str,
+        history_sync_at: str,
+        policy_version: int,
+    ) -> list[ReconciliationEvidence]: ...
+
 
 @dataclass(slots=True, frozen=True)
 class BatchGeneration:
@@ -164,8 +173,9 @@ def run_reconciliation_batch(
     book the user is currently reading.
 
     When an evidence provider is supplied, normalized evidence is persisted
-    before the checkpoint. An evidence-write failure therefore cannot turn an
-    item into a checkpoint-only result that later reporting is unable to explain.
+    before the checkpoint. An item is considered completed only when both the
+    checkpoint and evidence row exist for the same generation. This lets older
+    checkpoint-only rows be re-verified once after evidence persistence lands.
 
     Checkpoints are scoped to both baseline timestamps and a direction-specific
     reconciliation policy version. The shared resolver-v3 title semantics affect
@@ -204,6 +214,17 @@ def run_reconciliation_batch(
         history_sync_at=generation.history_sync_at,
         policy_version=generation.policy_version,
     )
+    if evidence_provider is not None:
+        evidence_ids = {
+            row.item_id
+            for row in evidence_provider.list_generation(
+                direction,
+                shelf_sync_at=generation.shelf_sync_at,
+                history_sync_at=generation.history_sync_at,
+                policy_version=generation.policy_version,
+            )
+        }
+        completed &= evidence_ids
 
     if direction == WEREAD_TO_DOUBAN:
         candidates = sorted(
@@ -277,7 +298,7 @@ def run_reconciliation_batch(
                 limit=catalog_limit_used,
             )
             selected_shelf_book = None
-            selected_edition = alignment.intent.selected_edition
+            selected_edition = alignment.intent.selected_ition if False else alignment.intent.selected_edition
             if selected_edition is not None and selected_edition.weread_id:
                 selected_shelf_book = shelf_provider.get(selected_edition.weread_id)
 
@@ -331,8 +352,6 @@ def _persist_evidence_if_requested(
     if evidence_provider is None:
         return
 
-    # Runtime import avoids a module cycle: user_plan imports BatchItemResult for
-    # its public product-level classifier.
     from .user_plan import user_plan_for_batch_item
 
     plan = user_plan_for_batch_item(item)
