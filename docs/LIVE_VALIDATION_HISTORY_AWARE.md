@@ -93,8 +93,36 @@ exact target Edition
 
 The Cookie was removed from the shell after the read-only test. No state-changing Douban write was performed.
 
+## 2026-08-20 — already-WISH no-op validation
+
+A second real target was selected for the planned first write candidate: subject `37252290` (`心智简史`, 汪祚军 / 吕飒飒, 浙江科学技术出版社, 2025-03, ISBN `9787573917072`).
+
+The authenticated read-only inspection again used a tiny live-search bound:
+
+```bash
+douban-weread inspect --subject 37252290 --limit 1
+```
+
+Observed state and decision:
+
+```text
+WISH [target] | subject 37252290 | 汪祚军, 吕飒飒 · 浙江科学技术出版社 · 2025-03 · 9787573917072
+
+Decision: noop_already_wish
+Safe to write Want-to-Read: False
+Requires user decision: False
+Reason: The selected edition is already marked Want-to-Read.
+```
+
+This validates the exact-target no-op path against the live provider: a target already marked `WISH` is not treated as `SAFE_TO_WISH` and no duplicate mutation is authorized.
+
+The Cookie was removed from the shell after the read-only test. No state-changing Douban write was performed.
+
 ## Status
 
-History-aware reconciliation is now live-validated for the core case it was designed to solve: a currently unmarked target Edition must not be considered safe to mark Want-to-Read when another Edition of the same Work already exists in the user's historical `READ` state.
+History-aware reconciliation is now live-validated for both:
+
+- the forgotten-history safety case, where another Edition of the same Work is already `READ` and the target must be blocked with `ASK_REREAD`;
+- the exact-target idempotency case, where the selected Edition is already `WISH` and the command returns `NOOP_ALREADY_WISH`.
 
 The next separate validation, if performed, should be a deliberately selected first real `wish` on a target that history-aware reconciliation classifies as safe. That mutation still requires explicit user confirmation and post-write read-back verification.
