@@ -13,11 +13,20 @@ class WeReadShelfRouterCliTests(unittest.TestCase):
         code = run(["--help"], stdout=stdout)
         self.assertEqual(code, 0)
         output = stdout.getvalue()
-        self.assertIn("{sync,status,lookup,preview,queue,verify,batch,report}", output)
+        self.assertIn("{sync,status,lookup,preview,queue,verify,batch,report,scan}", output)
         self.assertIn("batch", output)
         self.assertIn("baseline-scoped checkpoints", output)
         self.assertIn("report", output)
         self.assertIn("persisted reconciliation evidence", output)
+
+    def test_parent_help_exposes_scan(self) -> None:
+        stdout = io.StringIO()
+        code = run(["--help"], stdout=stdout)
+        self.assertEqual(code, 0)
+        output = stdout.getvalue()
+        self.assertIn("scan", output)
+        self.assertIn("visible progress", output)
+        self.assertIn("read-only", output)
 
     def test_batch_routes_without_leaking_batch_prefix(self) -> None:
         with patch("douban_weread.weread_shelf_batch_cli.run", return_value=0) as run_batch:
@@ -30,6 +39,12 @@ class WeReadShelfRouterCliTests(unittest.TestCase):
             code = run(["report", "--direction", "douban-to-weread", "--limit", "2"])
         self.assertEqual(code, 0)
         run_report.assert_called_once_with(["--direction", "douban-to-weread", "--limit", "2"])
+
+    def test_scan_routes_without_leaking_scan_prefix(self) -> None:
+        with patch("douban_weread.weread_shelf_scan_cli.run", return_value=0) as run_scan:
+            code = run(["scan", "--direction", "both", "--max-items", "4"])
+        self.assertEqual(code, 0)
+        run_scan.assert_called_once_with(["--direction", "both", "--max-items", "4"])
 
     def test_existing_shelf_command_routes_unchanged(self) -> None:
         with patch("douban_weread.weread_shelf_cli.run", return_value=0) as run_shelf:
