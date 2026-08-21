@@ -48,7 +48,7 @@ class FakeChannel:
         self.handlers = {}
         self.sent: list[tuple[str, object, object | None]] = []
         self.downloaded = downloaded
-        self.download_calls: list[tuple[str, str]] = []
+        self.download_calls: list[tuple[str, str, str | None]] = []
 
     def on(self, event: str, handler) -> None:
         self.handlers[event] = handler
@@ -60,8 +60,13 @@ class FakeChannel:
         self.sent.append((to, message, opts))
         return object()
 
-    async def download_resource(self, file_key: str, *, resource_type: str):
-        self.download_calls.append((file_key, resource_type))
+    async def download_resource(
+        self,
+        file_key: str,
+        resource_type: str = "image",
+        message_id: str | None = None,
+    ):
+        self.download_calls.append((file_key, resource_type, message_id))
         return self.downloaded
 
 
@@ -135,7 +140,10 @@ class FeishuBotTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(channel.download_calls, [("img_v3_abc", "image")])
+        self.assertEqual(
+            channel.download_calls,
+            [("img_v3_abc", "image", "om_msg")],
+        )
         self.assertEqual(recognizer.images, [b"image-bytes"])
         self.assertEqual(provider.isbn_calls, ["9787536692930"])
         self.assertEqual(provider.title_calls, [])
@@ -152,6 +160,10 @@ class FeishuBotTests(unittest.TestCase):
             _handle_message(channel, service, message, image_recognizer=recognizer)
         )
 
+        self.assertEqual(
+            channel.download_calls,
+            [("img_v3_abc", "image", "om_msg")],
+        )
         self.assertEqual(provider.title_calls, ["听妈妈的话"])
         self.assertIn("card", channel.sent[0][1])
 
@@ -168,6 +180,7 @@ class FeishuBotTests(unittest.TestCase):
             )
         )
         self.assertIn("没有拿到可下载", channel.sent[0][1]["text"])
+        self.assertEqual(channel.download_calls, [])
 
     def test_image_download_failure_does_not_call_ocr(self) -> None:
         channel = FakeChannel(downloaded=None)
@@ -176,6 +189,10 @@ class FeishuBotTests(unittest.TestCase):
         message = FakeMessage(raw_content_type="image", resources=[FakeResource()])
         asyncio.run(
             _handle_message(channel, service, message, image_recognizer=recognizer)
+        )
+        self.assertEqual(
+            channel.download_calls,
+            [("img_v3_abc", "image", "om_msg")],
         )
         self.assertEqual(recognizer.images, [])
         self.assertIn("图片下载失败", channel.sent[0][1]["text"])
