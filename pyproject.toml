@@ -12,6 +12,7 @@ license = {text = "MIT"}
 authors = [{name = "douban-weread contributors"}]
 dependencies = [
   "lark-channel-sdk>=1.0,<2",
+  "lark-oapi>=1.4,<2",
 ]
 
 [project.scripts]
