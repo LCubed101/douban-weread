@@ -31,7 +31,12 @@ class ChannelLike(Protocol):
 
     async def send(self, to: str, message: object, opts: object | None = None): ...
 
-    async def download_resource(self, file_key: str, *, resource_type: str): ...
+    async def download_resource(
+        self,
+        file_key: str,
+        resource_type: str = "image",
+        message_id: str | None = None,
+    ): ...
 
 
 class InboundMessageLike(Protocol):
@@ -86,7 +91,6 @@ def build_bot(
                 {"reply_to": message.message_id},
             )
         except Exception as exc:
-            # Keep credentials and provider payloads out of user-visible/log output.
             print(f"Feishu message handling error: {type(exc).__name__}", file=sys.stderr)
             await channel.send(
                 message.chat_id,
@@ -95,8 +99,6 @@ def build_bot(
             )
 
     async def on_card_action(event: object) -> None:
-        # Deliberately no mutation in this milestone. Card callbacks are wired so
-        # the next milestone can reconnect confirmation to the safe-write flow.
         print("Feishu card action received; mutation remains disabled in this milestone.")
 
     async def on_error(error: object) -> None:
@@ -154,7 +156,15 @@ async def _handle_image_message(
         )
         return
 
-    image_bytes = await channel.download_resource(file_key, resource_type="image")
+    # User-sent images are message resources. Passing message_id is required so
+    # the Channel SDK uses /im/v1/messages/:message_id/resources/:file_key
+    # instead of the standalone image endpoint (which only works for resources
+    # uploaded by the current app/bot).
+    image_bytes = await channel.download_resource(
+        file_key,
+        resource_type="image",
+        message_id=message.message_id,
+    )
     if not image_bytes:
         await channel.send(
             message.chat_id,
