@@ -10,10 +10,12 @@ from douban_weread.core.models import Edition
 
 
 _DOUBAN_SUBJECT_RE = re.compile(r"/subject/(?P<subject_id>\d+)/?")
+_ISBN_CANDIDATE_RE = re.compile(r"(?i)(?:ISBN(?:-1[03])?[:：]?\s*)?([0-9Xx][0-9Xx\-\s]{8,20}[0-9Xx])")
 
 
 class BookInboxInputKind(str, Enum):
     TEXT = "text"
+    ISBN = "isbn"
     DOUBAN_URL = "douban_url"
     WEREAD_URL = "weread_url"
     IMAGE_PENDING = "image_pending"
@@ -35,6 +37,7 @@ class BookInboxRequest:
     input_kind: BookInboxInputKind
     raw_text: str | None = None
     search_query: str | None = None
+    isbn: str | None = None
     douban_subject_id: str | None = None
     source_url: str | None = None
     image_key: str | None = None
@@ -61,6 +64,8 @@ class BookInboxResolution:
 class BookInboxDoubanProvider(Protocol):
     def search_by_title(self, title: str, *, count: int = 20) -> list[Edition]: ...
 
+    def search_by_isbn(self, isbn: str) -> Edition | None: ...
+
     def get_by_subject_id(self, subject_id: str) -> Edition | None: ...
 
 
@@ -81,13 +86,18 @@ class BookInboxService:
                     request=request,
                     message="没有找到这个豆瓣图书条目。",
                 )
-            confirmation = BookInboxConfirmation(request=request, candidate=edition)
-            return BookInboxResolution(
-                kind=BookInboxResolutionKind.CONFIRM,
-                request=request,
-                confirmation=confirmation,
-                candidates=(edition,),
-            )
+            return _confirm(request, edition)
+
+        if request.input_kind is BookInboxInputKind.ISBN:
+            isbn = request.isbn or ""
+            edition = self.douban_provider.search_by_isbn(isbn)
+            if edition is None:
+                return BookInboxResolution(
+                    kind=BookInboxResolutionKind.NOT_FOUND,
+                    request=request,
+                    message=f"没有找到 ISBN {isbn} 对应的豆瓣版本。",
+                )
+            return _confirm(request, edition)
 
         if request.input_kind is BookInboxInputKind.TEXT:
             query = request.search_query or ""
@@ -101,13 +111,7 @@ class BookInboxService:
                     message=f"没有找到《{query}》的豆瓣候选版本。",
                 )
             if len(candidates) == 1:
-                confirmation = BookInboxConfirmation(request=request, candidate=candidates[0])
-                return BookInboxResolution(
-                    kind=BookInboxResolutionKind.CONFIRM,
-                    request=request,
-                    confirmation=confirmation,
-                    candidates=candidates,
-                )
+                return _confirm(request, candidates[0])
             return BookInboxResolution(
                 kind=BookInboxResolutionKind.MULTIPLE_CANDIDATES,
                 request=request,
@@ -119,7 +123,7 @@ class BookInboxService:
             return BookInboxResolution(
                 kind=BookInboxResolutionKind.PENDING_IMAGE,
                 request=request,
-                message="图片已经收到，图片识别将在下一步接入。",
+                message="图片已经收到，正在等待图片识别。",
             )
 
         if request.input_kind is BookInboxInputKind.WEREAD_URL:
@@ -160,6 +164,14 @@ def request_from_text(text: str) -> BookInboxRequest:
             source_url=value,
         )
 
+    isbn = extract_isbn(value)
+    if isbn and _looks_like_isbn_only(value, isbn):
+        return BookInboxRequest(
+            input_kind=BookInboxInputKind.ISBN,
+            raw_text=value,
+            isbn=isbn,
+        )
+
     return BookInboxRequest(
         input_kind=BookInboxInputKind.TEXT,
         raw_text=value,
@@ -174,4 +186,30 @@ def request_from_image_key(image_key: str) -> BookInboxRequest:
     return BookInboxRequest(
         input_kind=BookInboxInputKind.IMAGE_PENDING,
         image_key=value,
+    )
+
+
+def extract_isbn(text: str) -> str | None:
+    """Return one normalized ISBN-10/13 candidate from arbitrary text."""
+
+    for match in _ISBN_CANDIDATE_RE.finditer(text):
+        normalized = re.sub(r"[^0-9Xx]", "", match.group(1)).upper()
+        if len(normalized) in {10, 13}:
+            return normalized
+    return None
+
+
+def _looks_like_isbn_only(raw: str, isbn: str) -> bool:
+    stripped = re.sub(r"(?i)ISBN(?:-1[03])?[:：]?", "", raw)
+    compact = re.sub(r"[^0-9Xx]", "", stripped).upper()
+    return compact == isbn
+
+
+def _confirm(request: BookInboxRequest, edition: Edition) -> BookInboxResolution:
+    confirmation = BookInboxConfirmation(request=request, candidate=edition)
+    return BookInboxResolution(
+        kind=BookInboxResolutionKind.CONFIRM,
+        request=request,
+        confirmation=confirmation,
+        candidates=(edition,),
     )
