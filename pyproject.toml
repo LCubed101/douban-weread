@@ -10,11 +10,14 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [{name = "douban-weread contributors"}]
-dependencies = []
+dependencies = [
+  "lark-channel-sdk>=1.0,<2",
+]
 
 [project.scripts]
 douban-weread = "douban_weread.entrypoint:main"
 douban-weread-ui = "douban_weread.web_ui:main"
+douban-weread-feishu = "douban_weread.feishu_bot:main"
 
 [tool.setuptools.packages.find]
 include = ["douban_weread*"]
