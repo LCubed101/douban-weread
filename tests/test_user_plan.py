@@ -30,11 +30,14 @@ class UserPlanTests(unittest.TestCase):
         suggested = {
             CrossPlatformStateAction.SUGGEST_WISH: ReadingState.WISH,
             CrossPlatformStateAction.SUGGEST_READING: ReadingState.READING,
-            CrossPlatformStateAction.SUGGEST_READ: ReadingState.READ,
             CrossPlatformStateAction.ASK_REREAD: ReadingState.READ,
-        }.get(action, ReadingState.WISH)
+        }.get(action, ReadingState.NONE)
         decision = CrossPlatformStateDecision(
-            weread_state=WeReadReadingState.UNREAD,
+            weread_state=(
+                WeReadReadingState.READ
+                if action is CrossPlatformStateAction.REMIND_DOUBAN_WRAP_UP
+                else WeReadReadingState.UNREAD
+            ),
             douban_state=ReadingState.NONE,
             suggested_douban_state=suggested,
             action=action,
@@ -156,6 +159,23 @@ class UserPlanTests(unittest.TestCase):
             self._weread_to_douban_item(CrossPlatformStateAction.SUGGEST_READING, exact=False)
         )
         self.assertEqual(plan.kind, UserPlanKind.REVIEW_EDITION)
+
+    def test_completed_weread_becomes_human_douban_wrap_up(self) -> None:
+        plan = user_plan_for_batch_item(
+            self._weread_to_douban_item(CrossPlatformStateAction.REMIND_DOUBAN_WRAP_UP)
+        )
+        self.assertEqual(plan.kind, UserPlanKind.REMIND_DOUBAN_WRAP_UP)
+        self.assertTrue(plan.requires_user_action)
+        self.assertIn("human", plan.summary)
+
+    def test_wrap_up_reminder_does_not_require_exact_edition(self) -> None:
+        plan = user_plan_for_batch_item(
+            self._weread_to_douban_item(
+                CrossPlatformStateAction.REMIND_DOUBAN_WRAP_UP,
+                exact=False,
+            )
+        )
+        self.assertEqual(plan.kind, UserPlanKind.REMIND_DOUBAN_WRAP_UP)
 
     def test_reread_is_explicit_review(self) -> None:
         plan = user_plan_for_batch_item(
