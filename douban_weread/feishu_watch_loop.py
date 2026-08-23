@@ -7,7 +7,7 @@ from typing import Protocol
 from douban_weread.weread_watch_worker import WeReadWatchNotification, WeReadWatchWorker
 
 
-DEFAULT_WATCH_INTERVAL_SECONDS = 24 * 60 * 60
+DEFAULT_WATCH_INTERVAL_SECONDS = 7 * 24 * 60 * 60
 
 
 class NotificationChannel(Protocol):
