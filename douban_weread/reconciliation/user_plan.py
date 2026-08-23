@@ -17,7 +17,7 @@ class UserPlanKind(str, Enum):
     ADD_TO_WEREAD_SHELF_ALTERNATIVE = "add_to_weread_shelf_alternative"
     SUGGEST_DOUBAN_WISH = "suggest_douban_wish"
     SUGGEST_DOUBAN_READING = "suggest_douban_reading"
-    SUGGEST_DOUBAN_READ = "suggest_douban_read"
+    REMIND_DOUBAN_WRAP_UP = "remind_douban_wrap_up"
     KEEP_DOUBAN_HISTORY = "keep_douban_history"
     REVIEW_REREAD = "review_reread"
     REVIEW_EDITION = "review_edition"
@@ -69,7 +69,6 @@ def _weread_to_douban_plan(item: BatchItemResult) -> UserReconciliationPlan:
     if action in {
         CrossPlatformStateAction.SUGGEST_WISH,
         CrossPlatformStateAction.SUGGEST_READING,
-        CrossPlatformStateAction.SUGGEST_READ,
     } and not decision.exact_edition_verified:
         return UserReconciliationPlan(
             kind=UserPlanKind.REVIEW_EDITION,
@@ -92,10 +91,13 @@ def _weread_to_douban_plan(item: BatchItemResult) -> UserReconciliationPlan:
             summary="WeRead shows verified active reading; suggest marking the verified Douban Work as Reading.",
             requires_user_action=True,
         )
-    if action is CrossPlatformStateAction.SUGGEST_READ:
+    if action is CrossPlatformStateAction.REMIND_DOUBAN_WRAP_UP:
         return UserReconciliationPlan(
-            kind=UserPlanKind.SUGGEST_DOUBAN_READ,
-            summary="WeRead shows verified completion; suggest marking the verified Douban Work as Read.",
+            kind=UserPlanKind.REMIND_DOUBAN_WRAP_UP,
+            summary=(
+                "WeRead shows verified completion. Keep the Douban finish step human: "
+                "remind the user to mark Read and write their own note or review on Douban."
+            ),
             requires_user_action=True,
         )
     if action is CrossPlatformStateAction.KEEP_HIGHER_DOUBAN_STATE:
