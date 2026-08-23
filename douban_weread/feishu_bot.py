@@ -3,19 +3,26 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
-from douban_weread.adapters.feishu import build_confirmation_card
+from douban_weread.adapters.feishu import (
+    build_confirmation_card,
+    build_wish_confirmation_card,
+)
 from douban_weread.adapters.feishu_ocr import FeishuImageOcr, FeishuOcrError, ImageTextRecognizer
 from douban_weread.inbox import (
-    BookInboxRequest,
     BookInboxResolution,
     BookInboxResolutionKind,
     BookInboxService,
     request_from_text,
 )
 from douban_weread.inbox_ocr import extract_book_hint
+from douban_weread.inbox_wish import (
+    DoubanWishFlow,
+    WISH_FLOW_ERRORS,
+    WishFlowKind,
+)
 from douban_weread.providers.douban import DoubanBookSearchClient, DoubanProviderError
 
 
@@ -47,6 +54,12 @@ class InboundMessageLike(Protocol):
     resources: Sequence[ResourceLike]
 
 
+class WishFlowLike(Protocol):
+    def preflight(self, subject_id: str): ...
+
+    def commit(self, subject_id: str): ...
+
+
 ChannelFactory = Callable[[str, str], ChannelLike]
 
 
@@ -75,11 +88,13 @@ def build_bot(
     channel_factory: ChannelFactory = _default_channel_factory,
     inbox_service: BookInboxService | None = None,
     image_recognizer: ImageTextRecognizer | None = None,
+    wish_flow: WishFlowLike | None = None,
 ) -> ChannelLike:
     app_id, app_secret = _credentials()
     channel = channel_factory(app_id, app_secret)
     service = inbox_service or BookInboxService(DoubanBookSearchClient(), search_limit=5)
     recognizer = image_recognizer or FeishuImageOcr(app_id=app_id, app_secret=app_secret)
+    flow = wish_flow or DoubanWishFlow()
 
     async def on_message(message: InboundMessageLike) -> None:
         try:
@@ -98,8 +113,22 @@ def build_bot(
                 {"reply_to": message.message_id},
             )
 
-    async def on_card_action(event: object) -> None:
-        print("Feishu card action received; mutation remains disabled in this milestone.")
+    async def on_card_action(event: object):
+        try:
+            return await _handle_card_action(channel, flow, event)
+        except WISH_FLOW_ERRORS as exc:
+            chat_id = _card_event_text(event, "chat_id")
+            message_id = _card_event_text(event, "message_id")
+            if chat_id:
+                await channel.send(
+                    chat_id,
+                    {"text": f"豆瓣想读操作未执行：{exc}"},
+                    {"reply_to": message_id} if message_id else None,
+                )
+            return {"toast": {"type": "error", "content": "未修改豆瓣，请查看机器人回复。"}}
+        except Exception as exc:
+            print(f"Feishu card action error: {type(exc).__name__}", file=sys.stderr)
+            return {"toast": {"type": "error", "content": "这次操作没有执行，请稍后再试。"}}
 
     async def on_error(error: object) -> None:
         print(f"Feishu channel error: {type(error).__name__}", file=sys.stderr)
@@ -108,6 +137,87 @@ def build_bot(
     channel.on("cardAction", on_card_action)
     channel.on("error", on_error)
     return channel
+
+
+async def _handle_card_action(
+    channel: ChannelLike,
+    flow: WishFlowLike,
+    event: object,
+):
+    chat_id = _card_event_text(event, "chat_id")
+    message_id = _card_event_text(event, "message_id")
+    value = _card_action_value(event)
+    action = str(value.get("action") or "").strip()
+    subject_id = str(value.get("douban_subject_id") or "").strip()
+
+    if action in {"reject_book", "cancel_wish"}:
+        return {"toast": {"type": "info", "content": "已取消，没有修改豆瓣。"}}
+
+    if action not in {"confirm_book", "confirm_wish"}:
+        return {"toast": {"type": "warning", "content": "无法识别这个操作，没有修改豆瓣。"}}
+
+    if not chat_id or not subject_id:
+        return {"toast": {"type": "error", "content": "缺少书籍或会话信息，没有修改豆瓣。"}}
+
+    if action == "confirm_book":
+        result = flow.preflight(subject_id)
+        if result.kind is WishFlowKind.ALREADY_WISH:
+            await channel.send(
+                chat_id,
+                {"text": result.message},
+                {"reply_to": message_id} if message_id else None,
+            )
+            return {"toast": {"type": "success", "content": "豆瓣已经是想读。"}}
+        if result.kind is not WishFlowKind.READY:
+            await channel.send(
+                chat_id,
+                {"text": result.message},
+                {"reply_to": message_id} if message_id else None,
+            )
+            return {"toast": {"type": "warning", "content": "需要先处理已有状态，没有修改豆瓣。"}}
+
+        card = build_wish_confirmation_card(
+            title=result.title or "这本书",
+            subject_id=subject_id,
+        )
+        await channel.send(
+            chat_id,
+            {"card": card},
+            {"reply_to": message_id} if message_id else None,
+        )
+        return {"toast": {"type": "info", "content": "检查通过，请再次确认是否加入想读。"}}
+
+    result = flow.commit(subject_id)
+    await channel.send(
+        chat_id,
+        {"text": result.message},
+        {"reply_to": message_id} if message_id else None,
+    )
+    if result.kind is WishFlowKind.WRITTEN:
+        return {"toast": {"type": "success", "content": "已加入豆瓣想读。"}}
+    if result.kind is WishFlowKind.ALREADY_WISH:
+        return {"toast": {"type": "success", "content": "豆瓣已经是想读。"}}
+    return {"toast": {"type": "warning", "content": "状态已变化，没有修改豆瓣。"}}
+
+
+def _card_event_text(event: object, field: str) -> str:
+    if isinstance(event, Mapping):
+        value = event.get(field)
+    else:
+        value = getattr(event, field, None)
+    return str(value or "").strip()
+
+
+def _card_action_value(event: object) -> dict[str, object]:
+    if isinstance(event, Mapping):
+        action = event.get("action")
+    else:
+        action = getattr(event, "action", None)
+    if isinstance(action, Mapping):
+        value = action.get("value")
+    else:
+        value = getattr(action, "value", None)
+    return dict(value) if isinstance(value, Mapping) else {}
 
 
 async def _handle_message(
@@ -255,7 +365,7 @@ def main() -> None:
         raise SystemExit(2) from exc
 
     print("Douban × WeRead Feishu Book Inbox starting via WebSocket...")
-    print("Image download + Feishu OCR enabled. No Douban or WeRead mutation is enabled.")
+    print("Image/OCR enabled. Douban Want-to-Read writes require two explicit card confirmations and read-back verification.")
     try:
         asyncio.run(channel.connect())
     except KeyboardInterrupt:
