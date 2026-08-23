@@ -11,7 +11,9 @@ from douban_weread.adapters.feishu import (
     build_wish_confirmation_card,
 )
 from douban_weread.adapters.feishu_ocr import FeishuImageOcr, FeishuOcrError, ImageTextRecognizer
+from douban_weread.core.models import Edition
 from douban_weread.inbox import (
+    BookInboxConfirmation,
     BookInboxResolution,
     BookInboxResolutionKind,
     BookInboxService,
@@ -60,6 +62,26 @@ class WishFlowLike(Protocol):
     def commit(self, subject_id: str): ...
 
 
+class CandidateSelectionStore:
+    """Small in-memory per-chat store for one pending multiple-edition choice."""
+
+    def __init__(self) -> None:
+        self._by_chat: dict[str, tuple[Edition, ...]] = {}
+
+    def set(self, chat_id: str, candidates: Sequence[Edition]) -> None:
+        values = tuple(candidates)
+        if values:
+            self._by_chat[chat_id] = values
+        else:
+            self._by_chat.pop(chat_id, None)
+
+    def get(self, chat_id: str) -> tuple[Edition, ...]:
+        return self._by_chat.get(chat_id, ())
+
+    def clear(self, chat_id: str) -> None:
+        self._by_chat.pop(chat_id, None)
+
+
 ChannelFactory = Callable[[str, str], ChannelLike]
 
 
@@ -95,10 +117,17 @@ def build_bot(
     service = inbox_service or BookInboxService(DoubanBookSearchClient(), search_limit=5)
     recognizer = image_recognizer or FeishuImageOcr(app_id=app_id, app_secret=app_secret)
     flow = wish_flow or DoubanWishFlow()
+    candidate_store = CandidateSelectionStore()
 
     async def on_message(message: InboundMessageLike) -> None:
         try:
-            await _handle_message(channel, service, message, image_recognizer=recognizer)
+            await _handle_message(
+                channel,
+                service,
+                message,
+                image_recognizer=recognizer,
+                candidate_store=candidate_store,
+            )
         except (DoubanProviderError, FeishuOcrError) as exc:
             await channel.send(
                 message.chat_id,
@@ -226,7 +255,10 @@ async def _handle_message(
     message: InboundMessageLike,
     *,
     image_recognizer: ImageTextRecognizer | None = None,
+    candidate_store: CandidateSelectionStore | None = None,
 ) -> None:
+    store = candidate_store or CandidateSelectionStore()
+
     if message.raw_content_type == "image":
         if image_recognizer is None:
             await channel.send(
@@ -235,7 +267,13 @@ async def _handle_message(
                 {"reply_to": message.message_id},
             )
             return
-        await _handle_image_message(channel, service, message, image_recognizer)
+        await _handle_image_message(
+            channel,
+            service,
+            message,
+            image_recognizer,
+            candidate_store=store,
+        )
         return
 
     if message.raw_content_type not in {"text", "post", ""}:
@@ -246,9 +284,44 @@ async def _handle_message(
         )
         return
 
+    if await _maybe_handle_candidate_number(channel, message, store):
+        return
+
     request = request_from_text(message.content_text)
     resolution = service.resolve(request)
-    await _send_resolution(channel, message, resolution)
+    await _send_resolution(channel, message, resolution, candidate_store=store)
+
+
+async def _maybe_handle_candidate_number(
+    channel: ChannelLike,
+    message: InboundMessageLike,
+    store: CandidateSelectionStore,
+) -> bool:
+    text = " ".join(message.content_text.split()).strip()
+    candidates = store.get(message.chat_id)
+    if not candidates or not text.isdigit():
+        return False
+
+    choice = int(text)
+    if choice < 1 or choice > len(candidates):
+        await channel.send(
+            message.chat_id,
+            {"text": f"当前有 {len(candidates)} 个候选版本，请回复 1–{len(candidates)} 选择。"},
+            {"reply_to": message.message_id},
+        )
+        return True
+
+    edition = candidates[choice - 1]
+    store.clear(message.chat_id)
+    request = request_from_text(edition.isbn or edition.title)
+    confirmation = BookInboxConfirmation(request=request, candidate=edition)
+    card = build_confirmation_card(confirmation)
+    await channel.send(
+        message.chat_id,
+        {"card": card},
+        {"reply_to": message.message_id},
+    )
+    return True
 
 
 async def _handle_image_message(
@@ -256,7 +329,10 @@ async def _handle_image_message(
     service: BookInboxService,
     message: InboundMessageLike,
     recognizer: ImageTextRecognizer,
+    *,
+    candidate_store: CandidateSelectionStore | None = None,
 ) -> None:
+    store = candidate_store or CandidateSelectionStore()
     file_key = _image_resource_key(message.resources)
     if not file_key:
         await channel.send(
@@ -266,10 +342,6 @@ async def _handle_image_message(
         )
         return
 
-    # User-sent images are message resources. Passing message_id is required so
-    # the Channel SDK uses /im/v1/messages/:message_id/resources/:file_key
-    # instead of the standalone image endpoint (which only works for resources
-    # uploaded by the current app/bot).
     image_bytes = await channel.download_resource(
         file_key,
         resource_type="image",
@@ -299,15 +371,19 @@ async def _handle_image_message(
         request = request_from_text(hint.title or "")
 
     resolution = service.resolve(request)
-    await _send_resolution(channel, message, resolution)
+    await _send_resolution(channel, message, resolution, candidate_store=store)
 
 
 async def _send_resolution(
     channel: ChannelLike,
     message: InboundMessageLike,
     resolution: BookInboxResolution,
+    *,
+    candidate_store: CandidateSelectionStore | None = None,
 ) -> None:
+    store = candidate_store or CandidateSelectionStore()
     if resolution.kind is BookInboxResolutionKind.CONFIRM:
+        store.clear(message.chat_id)
         confirmation = resolution.confirmation
         if confirmation is None:
             raise ValueError("Confirm resolution is missing confirmation data")
@@ -320,6 +396,7 @@ async def _send_resolution(
         return
 
     if resolution.kind is BookInboxResolutionKind.MULTIPLE_CANDIDATES:
+        store.set(message.chat_id, resolution.candidates)
         lines = [resolution.message or "找到多个版本："]
         for index, edition in enumerate(resolution.candidates, start=1):
             details = " · ".join(
@@ -333,7 +410,9 @@ async def _send_resolution(
                 if value
             )
             lines.append(f"{index}. {edition.title}" + (f"｜{details}" if details else ""))
-        lines.append("请发送更具体的书名、ISBN，或直接发送豆瓣图书链接。")
+        lines.append(
+            f"回复 1–{len(resolution.candidates)} 选择具体版本；也可以发送 ISBN 或豆瓣图书链接。"
+        )
         await channel.send(
             message.chat_id,
             {"text": "\n".join(lines)},
@@ -341,6 +420,7 @@ async def _send_resolution(
         )
         return
 
+    store.clear(message.chat_id)
     await channel.send(
         message.chat_id,
         {"text": resolution.message or "暂时无法识别这本书。"},
