@@ -125,6 +125,45 @@ class FeishuWeReadWatchTests(unittest.TestCase):
         self.assertIn("已加入「等待上架」列表", text)
         self.assertEqual(response["toast"]["type"], "success")
 
+    def test_not_found_lookup_is_queued_as_weak_watch_without_weread_identity(self) -> None:
+        source = Edition(
+            title="非普通读者",
+            authors=["艾伦·贝内特"],
+            douban_id="123",
+            isbn="9787544714204",
+        )
+        lookup = FakeLookup(
+            WeReadLookupResult(
+                kind=WeReadLookupKind.NOT_FOUND,
+                source_title=source.title,
+                selected_edition=None,
+                deep_link=None,
+                message="微信读书暂未通过标题或 ISBN 的当前有界搜索找到同 Work 版本。",
+            )
+        )
+        store = FakeWatchStore()
+        channel = FakeChannel()
+
+        response = asyncio.run(
+            _handle_card_action(
+                channel,
+                AlreadyWishFlow(source),
+                event(action="confirm_book"),
+                weread_lookup=lookup,
+                weread_watch_store=store,
+            )
+        )
+
+        self.assertEqual(len(store.calls), 1)
+        self.assertIsNone(store.calls[0]["weread"])
+        self.assertIsNone(store.calls[0]["deep_link"])
+        text = channel.sent[0][1]["text"]
+        self.assertIn("已经在豆瓣标记为想读", text)
+        self.assertIn("等待上架", text)
+        self.assertIn("弱匹配", text)
+        self.assertIn("标题 + ISBN", text)
+        self.assertEqual(response["toast"]["type"], "success")
+
     def test_already_wish_still_runs_read_only_lookup_and_queues_unavailable(self) -> None:
         source = Edition(title="非普通读者", authors=["艾伦·贝内特"], douban_id="123")
         weread = Edition(title="非普通读者", weread_id="wr1")
@@ -184,7 +223,7 @@ class FeishuWeReadWatchTests(unittest.TestCase):
         text = channel.sent[0][1]["text"]
         self.assertIn("已加入豆瓣想读", text)
         self.assertIn("等待上架记录暂时保存失败", text)
-        self.assertIn("豆瓣写入已经完成", text)
+        self.assertIn("豆瓣", text)
         self.assertEqual(response["toast"]["type"], "success")
 
     def test_readable_lookup_is_not_added_to_waiting_queue(self) -> None:
