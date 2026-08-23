@@ -117,7 +117,7 @@ _BUCKET_BY_PLAN = {
     UserPlanKind.ADD_TO_WEREAD_SHELF_ALTERNATIVE: ProductReconciliationBucket.ADD_TO_WEREAD,
     UserPlanKind.SUGGEST_DOUBAN_WISH: ProductReconciliationBucket.SUGGEST_DOUBAN_STATE,
     UserPlanKind.SUGGEST_DOUBAN_READING: ProductReconciliationBucket.SUGGEST_DOUBAN_STATE,
-    UserPlanKind.SUGGEST_DOUBAN_READ: ProductReconciliationBucket.SUGGEST_DOUBAN_STATE,
+    UserPlanKind.REMIND_DOUBAN_WRAP_UP: ProductReconciliationBucket.SUGGEST_DOUBAN_STATE,
     UserPlanKind.KEEP_DOUBAN_HISTORY: ProductReconciliationBucket.KEEP_DOUBAN_HISTORY,
     UserPlanKind.REVIEW_REREAD: ProductReconciliationBucket.REVIEW,
     UserPlanKind.REVIEW_EDITION: ProductReconciliationBucket.REVIEW,
