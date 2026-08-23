@@ -36,7 +36,7 @@ class CrossPlatformStateAction(str, Enum):
     NOOP_ALIGNED = "noop_aligned"
     SUGGEST_WISH = "suggest_wish"
     SUGGEST_READING = "suggest_reading"
-    SUGGEST_READ = "suggest_read"
+    REMIND_DOUBAN_WRAP_UP = "remind_douban_wrap_up"
     KEEP_HIGHER_DOUBAN_STATE = "keep_higher_douban_state"
     ASK_REREAD = "ask_reread"
     REVIEW_IDENTITY = "review_identity"
@@ -115,15 +115,17 @@ def recommend_douban_state_from_weread(
     same_work_verified: bool,
     exact_edition_verified: bool,
 ) -> CrossPlatformStateDecision:
-    """Recommend, but never auto-apply, a Douban state from verified WeRead evidence.
+    """Recommend cross-platform follow-up without silently copying reading state.
 
-    Work identity must be verified before any cross-platform state suggestion.
+    Work identity must be verified before any cross-platform suggestion.
     Exact Edition identity is recorded separately because a same-Work alternative
-    Edition can support a Work-level state suggestion while still requiring
-    Edition review before a concrete write.
+    Edition can support a Work-level suggestion while still requiring Edition
+    review before a concrete write.
 
-    v0.2 is deliberately read-only: every state-changing suggestion has
-    `safe_to_auto_apply=False`.
+    Completed reading is intentionally special: when WeRead says a Work is read
+    but Douban does not, the product only reminds the user to finish their Douban
+    ritual (mark read, rate, or write a short reflection). It never auto-applies
+    the Read state. This preserves the human part of finishing a book.
     """
     if not same_work_verified:
         return CrossPlatformStateDecision(
@@ -255,13 +257,18 @@ def recommend_douban_state_from_weread(
         return CrossPlatformStateDecision(
             weread_state=weread_state,
             douban_state=douban_state,
-            suggested_douban_state=ReadingState.READ,
-            action=CrossPlatformStateAction.SUGGEST_READ,
+            suggested_douban_state=douban_state,
+            action=CrossPlatformStateAction.REMIND_DOUBAN_WRAP_UP,
             same_work_verified=True,
             exact_edition_verified=exact_edition_verified,
             safe_to_auto_apply=False,
             requires_user_decision=True,
-            reason="WeRead has verified completed-reading evidence; suggest upgrading Douban to Read." + edition_note,
+            reason=(
+                "WeRead has verified completed-reading evidence, but finishing a book on Douban "
+                "is a human wrap-up step. Remind the user to mark it Read and optionally rate or "
+                "write a short reflection; never auto-apply the Douban Read state."
+                + edition_note
+            ),
         )
 
     return CrossPlatformStateDecision(
