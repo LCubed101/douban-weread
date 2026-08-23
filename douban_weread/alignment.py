@@ -33,12 +33,17 @@ def align_to_weread(
     client: WeReadCatalogClient,
     *,
     limit: int = 5,
+    search_keyword: str | None = None,
 ) -> WeReadAlignmentResult:
     """Resolve one Douban/source Edition against bounded official WeRead search.
 
     Search is deliberately bounded. `NOT_FOUND` therefore means no same-Work
     candidate was resolved within the configured search window, not proof that
     the entire WeRead catalog lacks the Work.
+
+    ``search_keyword`` allows callers to retry the same conservative resolver
+    with another official search key such as an exact ISBN. It does not relax
+    Work/Edition matching rules.
 
     A search candidate with ``soldout=1`` is preserved as `UNAVAILABLE` rather
     than being mislabeled `NOT_FOUND`. Positive availability requires both a
@@ -56,7 +61,8 @@ def align_to_weread(
         source="weread_official",
     )
 
-    candidates = client.search_books(source_edition.title, count=bounded_limit)
+    keyword = (search_keyword or source_edition.title).strip()
+    candidates = client.search_books(keyword, count=bounded_limit)
     examined = 0
     best_available: tuple[WeReadSearchCandidate, Edition, EditionMatchResult] | None = None
     best_unavailable: tuple[WeReadSearchCandidate, Edition, EditionMatchResult] | None = None
@@ -122,7 +128,7 @@ def align_to_weread(
     intent.weread_status = WeReadStatus.NOT_FOUND
     intent.resolution = EditionResolution.NO_WEREAD_EDITION
     intent.notes.append(
-        f"No same-Work WeRead Edition was resolved within the first {len(candidates)} search candidates; "
+        f"No same-Work WeRead Edition was resolved within the first {len(candidates)} search candidates for {keyword!r}; "
         "NOT_FOUND is bounded by the configured search policy."
     )
     return WeReadAlignmentResult(intent=intent, examined_candidates=examined)
