@@ -22,6 +22,9 @@ class WeReadWatchEntry:
     id: int
     chat_id: str
     source_title: str
+    source_authors: tuple[str, ...]
+    source_publisher: str | None
+    source_publish_date: str | None
     source_douban_id: str | None
     source_isbn: str | None
     weread_book_id: str | None
@@ -30,6 +33,16 @@ class WeReadWatchEntry:
     status: str
     created_at: str
     updated_at: str
+
+    def source_edition(self) -> Edition:
+        return Edition(
+            title=self.source_title,
+            authors=list(self.source_authors),
+            publisher=self.source_publisher,
+            publish_date=self.source_publish_date,
+            douban_id=self.source_douban_id,
+            isbn=self.source_isbn,
+        )
 
 
 class WeReadAvailabilityWatchStore:
@@ -95,12 +108,8 @@ class WeReadAvailabilityWatchStore:
             )
             conn.commit()
             row = conn.execute(
-                """
-                SELECT id, chat_id, source_title, source_douban_id, source_isbn,
-                       weread_book_id, weread_title, deep_link, status, created_at, updated_at
-                FROM weread_availability_watch
-                WHERE chat_id=? AND source_title=? AND source_douban_id IS ?
-                """,
+                _SELECT_COLUMNS
+                + " WHERE chat_id=? AND source_title=? AND source_douban_id IS ?",
                 (chat, source.title, source.douban_id),
             ).fetchone()
         assert row is not None
@@ -112,15 +121,41 @@ class WeReadAvailabilityWatchStore:
         self.initialize()
         with self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT id, chat_id, source_title, source_douban_id, source_isbn,
-                       weread_book_id, weread_title, deep_link, status, created_at, updated_at
-                FROM weread_availability_watch
-                WHERE status='pending'
-                ORDER BY created_at ASC, id ASC
-                """
+                _SELECT_COLUMNS
+                + " WHERE status='pending' ORDER BY created_at ASC, id ASC"
             ).fetchall()
         return [_row_to_entry(row) for row in rows]
+
+    def mark_available(
+        self,
+        entry_id: int,
+        *,
+        weread: Edition,
+        deep_link: str | None,
+    ) -> WeReadWatchEntry:
+        if entry_id < 1:
+            raise ValueError("watch entry id must be >= 1")
+        if not weread.weread_id:
+            raise ValueError("available WeRead Edition must have a bookId")
+
+        now = datetime.now(timezone.utc).isoformat()
+        self.initialize()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE weread_availability_watch
+                SET weread_book_id=?, weread_title=?, deep_link=?,
+                    status='available', updated_at=?
+                WHERE id=? AND status='pending'
+                """,
+                (weread.weread_id, weread.title, deep_link, now, entry_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("pending WeRead watch entry was not found")
+            conn.commit()
+            row = conn.execute(_SELECT_COLUMNS + " WHERE id=?", (entry_id,)).fetchone()
+        assert row is not None
+        return _row_to_entry(row)
 
     def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -152,17 +187,33 @@ class WeReadAvailabilityWatchStore:
         return sqlite3.connect(self.path)
 
 
+_SELECT_COLUMNS = """
+SELECT id, chat_id, source_title, source_authors_json, source_publisher,
+       source_publish_date, source_douban_id, source_isbn,
+       weread_book_id, weread_title, deep_link, status, created_at, updated_at
+FROM weread_availability_watch
+"""
+
+
 def _row_to_entry(row: tuple[object, ...]) -> WeReadWatchEntry:
+    try:
+        raw_authors = json.loads(str(row[3]))
+    except json.JSONDecodeError:
+        raw_authors = []
+    authors = tuple(str(value) for value in raw_authors) if isinstance(raw_authors, list) else ()
     return WeReadWatchEntry(
         id=int(row[0]),
         chat_id=str(row[1]),
         source_title=str(row[2]),
-        source_douban_id=str(row[3]) if row[3] is not None else None,
-        source_isbn=str(row[4]) if row[4] is not None else None,
-        weread_book_id=str(row[5]) if row[5] is not None else None,
-        weread_title=str(row[6]) if row[6] is not None else None,
-        deep_link=str(row[7]) if row[7] is not None else None,
-        status=str(row[8]),
-        created_at=str(row[9]),
-        updated_at=str(row[10]),
+        source_authors=authors,
+        source_publisher=str(row[4]) if row[4] is not None else None,
+        source_publish_date=str(row[5]) if row[5] is not None else None,
+        source_douban_id=str(row[6]) if row[6] is not None else None,
+        source_isbn=str(row[7]) if row[7] is not None else None,
+        weread_book_id=str(row[8]) if row[8] is not None else None,
+        weread_title=str(row[9]) if row[9] is not None else None,
+        deep_link=str(row[10]) if row[10] is not None else None,
+        status=str(row[11]),
+        created_at=str(row[12]),
+        updated_at=str(row[13]),
     )
