@@ -8,6 +8,17 @@ from douban_weread import entrypoint
 
 
 class EntrypointTests(unittest.TestCase):
+    def test_weread_capabilities_subcommand_routes_to_capability_cli(self) -> None:
+        with (
+            patch.object(sys, "argv", ["douban-weread", "weread", "capabilities"]),
+            patch("douban_weread.weread_capabilities_cli.run", return_value=0) as run_capabilities,
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                entrypoint.main()
+
+        self.assertEqual(raised.exception.code, 0)
+        run_capabilities.assert_called_once_with([])
+
     def test_weread_subcommand_is_dispatched_without_leaking_prefix(self) -> None:
         with (
             patch.object(sys, "argv", ["douban-weread", "weread", "search", "白夜行", "--limit", "5"]),
