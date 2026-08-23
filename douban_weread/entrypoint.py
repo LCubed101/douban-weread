@@ -4,6 +4,11 @@ import sys
 
 
 def main() -> None:
+    if len(sys.argv) > 2 and sys.argv[1:3] == ["weread", "capabilities"]:
+        from douban_weread.weread_capabilities_cli import run as run_weread_capabilities
+
+        raise SystemExit(run_weread_capabilities(sys.argv[3:]))
+
     if len(sys.argv) > 2 and sys.argv[1:3] == ["weread", "shelf"]:
         from douban_weread.weread_shelf_router_cli import run as run_weread_shelf
 
