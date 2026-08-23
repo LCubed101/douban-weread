@@ -19,6 +19,17 @@ class EntrypointTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         run_capabilities.assert_called_once_with([])
 
+    def test_weread_watch_subcommand_routes_to_watch_cli(self) -> None:
+        with (
+            patch.object(sys, "argv", ["douban-weread", "weread", "watch", "check"]),
+            patch("douban_weread.weread_watch_cli.run", return_value=0) as run_watch,
+        ):
+            with self.assertRaises(SystemExit) as raised:
+                entrypoint.main()
+
+        self.assertEqual(raised.exception.code, 0)
+        run_watch.assert_called_once_with(["check"])
+
     def test_weread_subcommand_is_dispatched_without_leaking_prefix(self) -> None:
         with (
             patch.object(sys, "argv", ["douban-weread", "weread", "search", "白夜行", "--limit", "5"]),
