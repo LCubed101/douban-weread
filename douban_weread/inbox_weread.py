@@ -39,7 +39,7 @@ class WeReadEditionLookup:
         self,
         provider: WeReadCatalogProvider | None = None,
         *,
-        search_limit: int = 5,
+        search_limit: int = 20,
     ) -> None:
         self.provider = provider or WeReadClient(api_key=os.getenv("WEREAD_API_KEY", ""))
         self.search_limit = max(1, min(search_limit, 20))
