@@ -24,6 +24,11 @@ from douban_weread.inbox_weread import (
     WEREAD_LOOKUP_ERRORS,
     WeReadEditionLookup,
 )
+from douban_weread.inbox_weread_watch import (
+    WeReadWatchStoreLike,
+    default_watch_store,
+    record_unavailable_watch,
+)
 from douban_weread.inbox_wish import (
     DoubanWishFlow,
     WISH_FLOW_ERRORS,
@@ -120,6 +125,7 @@ def build_bot(
     image_recognizer: ImageTextRecognizer | None = None,
     wish_flow: WishFlowLike | None = None,
     weread_lookup: WeReadLookupLike | None = None,
+    weread_watch_store: WeReadWatchStoreLike | None = None,
 ) -> ChannelLike:
     app_id, app_secret = _credentials()
     channel = channel_factory(app_id, app_secret)
@@ -127,6 +133,7 @@ def build_bot(
     recognizer = image_recognizer or FeishuImageOcr(app_id=app_id, app_secret=app_secret)
     flow = wish_flow or DoubanWishFlow()
     lookup = weread_lookup or WeReadEditionLookup()
+    watch_store = weread_watch_store or default_watch_store()
     candidate_store = CandidateSelectionStore()
 
     async def on_message(message: InboundMessageLike) -> None:
@@ -159,6 +166,7 @@ def build_bot(
                 flow,
                 event,
                 weread_lookup=lookup,
+                weread_watch_store=watch_store,
             )
         except WISH_FLOW_ERRORS as exc:
             chat_id = _card_event_text(event, "chat_id")
@@ -189,6 +197,7 @@ async def _handle_card_action(
     event: object,
     *,
     weread_lookup: WeReadLookupLike | None = None,
+    weread_watch_store: WeReadWatchStoreLike | None = None,
 ):
     chat_id = _card_event_text(event, "chat_id")
     message_id = _card_event_text(event, "message_id")
@@ -243,6 +252,15 @@ async def _handle_card_action(
             try:
                 weread_result = weread_lookup.lookup(source_edition)
                 response_text = f"{response_text}\n\n{weread_result.message}"
+                if weread_watch_store is not None:
+                    watch_message = record_unavailable_watch(
+                        chat_id=chat_id,
+                        source=source_edition,
+                        result=weread_result,
+                        store=weread_watch_store,
+                    )
+                    if watch_message:
+                        response_text = f"{response_text}\n{watch_message}"
             except WEREAD_LOOKUP_ERRORS as exc:
                 lookup_failed = True
                 response_text = (
@@ -488,7 +506,7 @@ def main() -> None:
     print("Douban × WeRead Feishu Book Inbox starting via WebSocket...")
     print(
         "Image/OCR enabled. Douban Want-to-Read writes require two explicit card confirmations and read-back verification; "
-        "verified writes are followed by a read-only WeRead Edition lookup."
+        "verified writes are followed by a read-only WeRead Edition lookup, and unavailable matches are queued locally for recheck."
     )
     try:
         asyncio.run(channel.connect())
