@@ -100,7 +100,7 @@ def parse_feishu_event(payload: Mapping[str, Any]) -> FeishuInboundMessage | Non
 
 
 def build_confirmation_card(confirmation: BookInboxConfirmation) -> dict[str, Any]:
-    """Build a Feishu interactive-card payload without performing any mutation."""
+    """Build the first identity-confirmation card without performing mutation."""
 
     edition = confirmation.candidate
     details: list[str] = []
@@ -158,6 +158,55 @@ def build_confirmation_card(confirmation: BookInboxConfirmation) -> dict[str, An
             "template": "blue",
         },
         "elements": elements,
+    }
+
+
+def build_wish_confirmation_card(*, title: str, subject_id: str) -> dict[str, Any]:
+    """Build the second, state-changing confirmation card.
+
+    Rendering this card never authorizes a write by itself. The callback value
+    explicitly carries a distinct `confirm_wish` action so the bot can require a
+    second user click after a fresh read-only reconciliation preflight.
+    """
+
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": False},
+        "header": {
+            "title": {"tag": "plain_text", "content": "确认加入豆瓣想读？"},
+            "template": "orange",
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": (
+                    f"**{title}**\n"
+                    "已通过版本与豆瓣历史状态检查。\n"
+                    "只有点击下面的确认按钮后，才会真正修改豆瓣。"
+                ),
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "加入豆瓣想读"},
+                        "type": "primary",
+                        "value": {
+                            "action": "confirm_wish",
+                            "douban_subject_id": subject_id,
+                        },
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "取消"},
+                        "value": {
+                            "action": "cancel_wish",
+                            "douban_subject_id": subject_id,
+                        },
+                    },
+                ],
+            },
+        ],
     }
 
 
