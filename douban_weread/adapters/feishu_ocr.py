@@ -4,16 +4,30 @@ import base64
 from typing import Protocol
 
 
+FEISHU_OCR_RATE_LIMIT_CODE = 99991400
+
+
 class ImageTextRecognizer(Protocol):
     async def recognize(self, image_bytes: bytes) -> tuple[str, ...]: ...
 
 
 class FeishuOcrError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, code: int | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+
+    @property
+    def is_rate_limited(self) -> bool:
+        return self.code == FEISHU_OCR_RATE_LIMIT_CODE
 
 
 class FeishuImageOcr:
-    """Thin async adapter around Feishu Optical Character Recognition API."""
+    """Thin async adapter around Feishu Optical Character Recognition API.
+
+    The adapter performs exactly one provider request per image. In particular,
+    rate-limit responses are surfaced to the caller instead of being retried
+    automatically, so a temporary provider limit cannot be amplified locally.
+    """
 
     def __init__(self, *, app_id: str, app_secret: str) -> None:
         import lark_oapi as lark
@@ -46,8 +60,10 @@ class FeishuImageOcr:
         )
         response = await self._client.optical_char_recognition.v1.image.abasic_recognize(request)
         if not response.success():
+            code = int(response.code) if response.code is not None else None
             raise FeishuOcrError(
-                f"Feishu OCR failed with code {response.code}: {response.msg}"
+                f"Feishu OCR failed with code {response.code}: {response.msg}",
+                code=code,
             )
         data = response.data
         lines = getattr(data, "text_list", None) if data is not None else None
