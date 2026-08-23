@@ -217,11 +217,27 @@ async def _handle_card_action(
     if action == "confirm_book":
         result = flow.preflight(subject_id)
         if result.kind is WishFlowKind.ALREADY_WISH:
+            source_edition = result.decision.target if result.decision is not None else None
+            response_text, lookup_failed = _with_weread_followup(
+                base_text=result.message,
+                chat_id=chat_id,
+                source_edition=source_edition,
+                weread_lookup=weread_lookup,
+                weread_watch_store=weread_watch_store,
+                douban_write_completed=False,
+            )
             await channel.send(
                 chat_id,
-                {"text": result.message},
+                {"text": response_text},
                 {"reply_to": message_id} if message_id else None,
             )
+            if lookup_failed:
+                return {
+                    "toast": {
+                        "type": "warning",
+                        "content": "豆瓣已经是想读；微信读书查找暂时失败。",
+                    }
+                }
             return {"toast": {"type": "success", "content": "豆瓣已经是想读。"}}
         if result.kind is not WishFlowKind.READY:
             await channel.send(
@@ -243,31 +259,15 @@ async def _handle_card_action(
         return {"toast": {"type": "info", "content": "检查通过，请再次确认是否加入想读。"}}
 
     result = flow.commit(subject_id)
-    response_text = result.message
-    lookup_failed = False
-
-    if result.kind is WishFlowKind.WRITTEN and weread_lookup is not None:
-        source_edition = result.decision.target if result.decision is not None else None
-        if source_edition is not None:
-            try:
-                weread_result = weread_lookup.lookup(source_edition)
-                response_text = f"{response_text}\n\n{weread_result.message}"
-                if weread_watch_store is not None:
-                    watch_message = record_unavailable_watch(
-                        chat_id=chat_id,
-                        source=source_edition,
-                        result=weread_result,
-                        store=weread_watch_store,
-                    )
-                    if watch_message:
-                        response_text = f"{response_text}\n{watch_message}"
-            except WEREAD_LOOKUP_ERRORS as exc:
-                lookup_failed = True
-                response_text = (
-                    f"{response_text}\n\n"
-                    f"微信读书查找暂时失败：{exc}\n"
-                    "豆瓣写入已经完成并验证，不需要重复点击加入想读。"
-                )
+    source_edition = result.decision.target if result.decision is not None else None
+    response_text, lookup_failed = _with_weread_followup(
+        base_text=result.message,
+        chat_id=chat_id,
+        source_edition=source_edition if result.kind is WishFlowKind.WRITTEN else None,
+        weread_lookup=weread_lookup,
+        weread_watch_store=weread_watch_store,
+        douban_write_completed=result.kind is WishFlowKind.WRITTEN,
+    )
 
     await channel.send(
         chat_id,
@@ -286,6 +286,41 @@ async def _handle_card_action(
     if result.kind is WishFlowKind.ALREADY_WISH:
         return {"toast": {"type": "success", "content": "豆瓣已经是想读。"}}
     return {"toast": {"type": "warning", "content": "状态已变化，没有修改豆瓣。"}}
+
+
+def _with_weread_followup(
+    *,
+    base_text: str,
+    chat_id: str,
+    source_edition: Edition | None,
+    weread_lookup: WeReadLookupLike | None,
+    weread_watch_store: WeReadWatchStoreLike | None,
+    douban_write_completed: bool,
+) -> tuple[str, bool]:
+    if source_edition is None or weread_lookup is None:
+        return base_text, False
+
+    try:
+        weread_result = weread_lookup.lookup(source_edition)
+    except WEREAD_LOOKUP_ERRORS as exc:
+        douban_note = (
+            "豆瓣写入已经完成并验证，不需要重复点击加入想读。"
+            if douban_write_completed
+            else "豆瓣已经是想读，没有修改豆瓣状态。"
+        )
+        return f"{base_text}\n\n微信读书查找暂时失败：{exc}\n{douban_note}", True
+
+    response_text = f"{base_text}\n\n{weread_result.message}"
+    if weread_watch_store is not None:
+        watch_message = record_unavailable_watch(
+            chat_id=chat_id,
+            source=source_edition,
+            result=weread_result,
+            store=weread_watch_store,
+        )
+        if watch_message:
+            response_text = f"{response_text}\n{watch_message}"
+    return response_text, False
 
 
 def _card_event_text(event: object, field: str) -> str:
@@ -506,7 +541,7 @@ def main() -> None:
     print("Douban × WeRead Feishu Book Inbox starting via WebSocket...")
     print(
         "Image/OCR enabled. Douban Want-to-Read writes require two explicit card confirmations and read-back verification; "
-        "verified writes are followed by a read-only WeRead Edition lookup, and unavailable matches are queued locally for recheck."
+        "confirmed books are followed by a read-only WeRead Edition lookup, and unavailable matches are queued locally for recheck."
     )
     try:
         asyncio.run(channel.connect())
