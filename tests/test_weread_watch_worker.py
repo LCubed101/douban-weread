@@ -90,7 +90,7 @@ class WeReadWatchWorkerTests(unittest.TestCase):
 
             self.assertEqual(lookup.calls, [])
             self.assertEqual(len(notices), 1)
-            self.assertIn("已经在你的微信读书书架", notices[0].text)
+            self.assertIn("已检测到这个版本在你的微信读书书架中", notices[0].text)
 
     def test_still_pending_emits_no_notification(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
