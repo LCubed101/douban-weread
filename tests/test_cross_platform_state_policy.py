@@ -66,17 +66,36 @@ class CrossPlatformStatePolicyTests(unittest.TestCase):
                 self.assertEqual(decision.suggested_douban_state, ReadingState.READING)
                 self.assertFalse(decision.safe_to_auto_apply)
 
-    def test_completed_weread_suggests_read_without_auto_apply(self) -> None:
+    def test_completed_weread_reminds_for_human_douban_wrap_up(self) -> None:
+        for current in (ReadingState.NONE, ReadingState.WISH, ReadingState.READING):
+            with self.subTest(current=current):
+                decision = recommend_douban_state_from_weread(
+                    WeReadReadingState.READ,
+                    current,
+                    same_work_verified=True,
+                    exact_edition_verified=True,
+                )
+                self.assertEqual(
+                    decision.action,
+                    CrossPlatformStateAction.REMIND_DOUBAN_WRAP_UP,
+                )
+                self.assertEqual(decision.suggested_douban_state, current)
+                self.assertFalse(decision.safe_to_auto_apply)
+                self.assertTrue(decision.requires_user_decision)
+                self.assertIn("human wrap-up", decision.reason)
+                self.assertIn("never auto-apply", decision.reason)
+
+    def test_completed_weread_and_douban_read_is_already_aligned(self) -> None:
         decision = recommend_douban_state_from_weread(
             WeReadReadingState.READ,
-            ReadingState.READING,
+            ReadingState.READ,
             same_work_verified=True,
             exact_edition_verified=True,
         )
-        self.assertEqual(decision.action, CrossPlatformStateAction.SUGGEST_READ)
+        self.assertEqual(decision.action, CrossPlatformStateAction.NOOP_ALIGNED)
         self.assertEqual(decision.suggested_douban_state, ReadingState.READ)
         self.assertFalse(decision.safe_to_auto_apply)
-        self.assertTrue(decision.requires_user_decision)
+        self.assertFalse(decision.requires_user_decision)
 
     def test_douban_read_plus_weread_reading_is_possible_reread(self) -> None:
         decision = recommend_douban_state_from_weread(
