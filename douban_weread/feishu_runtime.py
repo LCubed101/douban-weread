@@ -55,7 +55,7 @@ def main() -> None:
         "Image/OCR enabled. Douban Want-to-Read writes require two explicit card confirmations and read-back verification; "
         "confirmed books are followed by a read-only WeRead Edition lookup, and unavailable matches are queued locally for recheck."
     )
-    print(f"WeRead availability watch enabled: checking every {interval:g} seconds (default: 86400 / 24h).")
+    print(f"WeRead availability watch enabled: checking every {interval:g} seconds (default: 604800 / 7d).")
     try:
         asyncio.run(run_runtime(channel, worker, interval_seconds=interval))
     except KeyboardInterrupt:
