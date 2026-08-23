@@ -20,6 +20,10 @@ from douban_weread.inbox import (
     request_from_text,
 )
 from douban_weread.inbox_ocr import extract_book_hint
+from douban_weread.inbox_weread import (
+    WEREAD_LOOKUP_ERRORS,
+    WeReadEditionLookup,
+)
 from douban_weread.inbox_wish import (
     DoubanWishFlow,
     WISH_FLOW_ERRORS,
@@ -60,6 +64,10 @@ class WishFlowLike(Protocol):
     def preflight(self, subject_id: str): ...
 
     def commit(self, subject_id: str): ...
+
+
+class WeReadLookupLike(Protocol):
+    def lookup(self, source_edition: Edition): ...
 
 
 class CandidateSelectionStore:
@@ -111,12 +119,14 @@ def build_bot(
     inbox_service: BookInboxService | None = None,
     image_recognizer: ImageTextRecognizer | None = None,
     wish_flow: WishFlowLike | None = None,
+    weread_lookup: WeReadLookupLike | None = None,
 ) -> ChannelLike:
     app_id, app_secret = _credentials()
     channel = channel_factory(app_id, app_secret)
     service = inbox_service or BookInboxService(DoubanBookSearchClient(), search_limit=5)
     recognizer = image_recognizer or FeishuImageOcr(app_id=app_id, app_secret=app_secret)
     flow = wish_flow or DoubanWishFlow()
+    lookup = weread_lookup or WeReadEditionLookup()
     candidate_store = CandidateSelectionStore()
 
     async def on_message(message: InboundMessageLike) -> None:
@@ -144,7 +154,12 @@ def build_bot(
 
     async def on_card_action(event: object):
         try:
-            return await _handle_card_action(channel, flow, event)
+            return await _handle_card_action(
+                channel,
+                flow,
+                event,
+                weread_lookup=lookup,
+            )
         except WISH_FLOW_ERRORS as exc:
             chat_id = _card_event_text(event, "chat_id")
             message_id = _card_event_text(event, "message_id")
@@ -172,6 +187,8 @@ async def _handle_card_action(
     channel: ChannelLike,
     flow: WishFlowLike,
     event: object,
+    *,
+    weread_lookup: WeReadLookupLike | None = None,
 ):
     chat_id = _card_event_text(event, "chat_id")
     message_id = _card_event_text(event, "message_id")
@@ -217,12 +234,36 @@ async def _handle_card_action(
         return {"toast": {"type": "info", "content": "检查通过，请再次确认是否加入想读。"}}
 
     result = flow.commit(subject_id)
+    response_text = result.message
+    lookup_failed = False
+
+    if result.kind is WishFlowKind.WRITTEN and weread_lookup is not None:
+        source_edition = result.decision.target if result.decision is not None else None
+        if source_edition is not None:
+            try:
+                weread_result = weread_lookup.lookup(source_edition)
+                response_text = f"{response_text}\n\n{weread_result.message}"
+            except WEREAD_LOOKUP_ERRORS as exc:
+                lookup_failed = True
+                response_text = (
+                    f"{response_text}\n\n"
+                    f"微信读书查找暂时失败：{exc}\n"
+                    "豆瓣写入已经完成并验证，不需要重复点击加入想读。"
+                )
+
     await channel.send(
         chat_id,
-        {"text": result.message},
+        {"text": response_text},
         {"reply_to": message_id} if message_id else None,
     )
     if result.kind is WishFlowKind.WRITTEN:
+        if lookup_failed:
+            return {
+                "toast": {
+                    "type": "warning",
+                    "content": "豆瓣已加入想读；微信读书查找暂时失败。",
+                }
+            }
         return {"toast": {"type": "success", "content": "已加入豆瓣想读。"}}
     if result.kind is WishFlowKind.ALREADY_WISH:
         return {"toast": {"type": "success", "content": "豆瓣已经是想读。"}}
@@ -445,7 +486,10 @@ def main() -> None:
         raise SystemExit(2) from exc
 
     print("Douban × WeRead Feishu Book Inbox starting via WebSocket...")
-    print("Image/OCR enabled. Douban Want-to-Read writes require two explicit card confirmations and read-back verification.")
+    print(
+        "Image/OCR enabled. Douban Want-to-Read writes require two explicit card confirmations and read-back verification; "
+        "verified writes are followed by a read-only WeRead Edition lookup."
+    )
     try:
         asyncio.run(channel.connect())
     except KeyboardInterrupt:
