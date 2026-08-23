@@ -7,7 +7,12 @@ from dataclasses import dataclass, field
 from unittest.mock import patch
 
 from douban_weread.core.models import Edition
-from douban_weread.feishu_bot import _handle_card_action, _handle_message, build_bot
+from douban_weread.feishu_bot import (
+    CandidateSelectionStore,
+    _handle_card_action,
+    _handle_message,
+    build_bot,
+)
 from douban_weread.inbox import BookInboxService
 from douban_weread.inbox_wish import WishFlowKind, WishFlowResult
 
@@ -36,6 +41,29 @@ class FakeDouban:
 
     def get_by_subject_id(self, subject_id: str) -> Edition | None:
         return None
+
+
+class MultiCandidateDouban(FakeDouban):
+    def search_by_title(self, title: str, *, count: int = 20) -> list[Edition]:
+        self.title_calls.append(title)
+        if title == "听妈妈的话":
+            return [
+                Edition(
+                    title="听妈妈的话",
+                    authors=["李凡"],
+                    publisher="上海译文出版社",
+                    publish_date="2026-08",
+                    isbn="9787580702531",
+                    douban_id="38540433",
+                ),
+                Edition(
+                    title="听妈妈的话",
+                    publisher="新疆青少年出版社",
+                    isbn="9787551524728",
+                    douban_id="20000002",
+                ),
+            ]
+        return []
 
 
 @dataclass
@@ -163,6 +191,117 @@ class FeishuBotTests(unittest.TestCase):
         self.assertEqual(chat_id, "oc_chat")
         self.assertIn("card", payload)
         self.assertEqual(opts, {"reply_to": "om_msg"})
+
+    def test_numeric_reply_selects_first_pending_candidate(self) -> None:
+        channel = FakeChannel()
+        provider = MultiCandidateDouban()
+        service = BookInboxService(provider)
+        store = CandidateSelectionStore()
+
+        asyncio.run(
+            _handle_message(
+                channel,
+                service,
+                FakeMessage(content_text="听妈妈的话"),
+                candidate_store=store,
+            )
+        )
+        self.assertIn("回复 1–2", channel.sent[-1][1]["text"])
+
+        asyncio.run(
+            _handle_message(
+                channel,
+                service,
+                FakeMessage(content_text="1", message_id="om_choice"),
+                candidate_store=store,
+            )
+        )
+        self.assertEqual(provider.title_calls, ["听妈妈的话"])
+        self.assertIn("card", channel.sent[-1][1])
+        card = channel.sent[-1][1]["card"]
+        self.assertIn("听妈妈的话", card["elements"][0]["content"])
+        self.assertEqual(
+            card["elements"][1]["actions"][0]["value"]["douban_subject_id"],
+            "38540433",
+        )
+
+    def test_pending_candidates_are_isolated_by_chat(self) -> None:
+        channel = FakeChannel()
+        provider = MultiCandidateDouban()
+        service = BookInboxService(provider)
+        store = CandidateSelectionStore()
+
+        asyncio.run(
+            _handle_message(
+                channel,
+                service,
+                FakeMessage(chat_id="chat_a", content_text="听妈妈的话"),
+                candidate_store=store,
+            )
+        )
+        asyncio.run(
+            _handle_message(
+                channel,
+                service,
+                FakeMessage(chat_id="chat_b", content_text="1"),
+                candidate_store=store,
+            )
+        )
+        self.assertEqual(provider.title_calls, ["听妈妈的话", "1"])
+        self.assertNotIn("card", channel.sent[-1][1])
+        self.assertEqual(len(store.get("chat_a")), 2)
+        self.assertEqual(store.get("chat_b"), ())
+
+    def test_out_of_range_numeric_reply_does_not_search(self) -> None:
+        channel = FakeChannel()
+        provider = MultiCandidateDouban()
+        service = BookInboxService(provider)
+        store = CandidateSelectionStore()
+
+        asyncio.run(
+            _handle_message(
+                channel,
+                service,
+                FakeMessage(content_text="听妈妈的话"),
+                candidate_store=store,
+            )
+        )
+        asyncio.run(
+            _handle_message(
+                channel,
+                service,
+                FakeMessage(content_text="8", message_id="om_bad_choice"),
+                candidate_store=store,
+            )
+        )
+        self.assertEqual(provider.title_calls, ["听妈妈的话"])
+        self.assertIn("请回复 1–2", channel.sent[-1][1]["text"])
+        self.assertEqual(len(store.get("oc_chat")), 2)
+
+    def test_candidate_selection_clears_pending_list(self) -> None:
+        channel = FakeChannel()
+        provider = MultiCandidateDouban()
+        service = BookInboxService(provider)
+        store = CandidateSelectionStore()
+
+        asyncio.run(
+            _handle_message(
+                channel,
+                service,
+                FakeMessage(content_text="听妈妈的话"),
+                candidate_store=store,
+            )
+        )
+        self.assertEqual(len(store.get("oc_chat")), 2)
+        asyncio.run(
+            _handle_message(
+                channel,
+                service,
+                FakeMessage(content_text="2", message_id="om_choice"),
+                candidate_store=store,
+            )
+        )
+        self.assertEqual(store.get("oc_chat"), ())
 
     def test_first_card_confirmation_only_preflights_and_sends_second_card(self) -> None:
         channel = FakeChannel()
