@@ -18,7 +18,7 @@ dependencies = [
 [project.scripts]
 douban-weread = "douban_weread.entrypoint:main"
 douban-weread-ui = "douban_weread.web_ui:main"
-douban-weread-feishu = "douban_weread.feishu_bot:main"
+douban-weread-feishu = "douban_weread.feishu_runtime:main"
 
 [tool.setuptools.packages.find]
 include = ["douban_weread*"]
