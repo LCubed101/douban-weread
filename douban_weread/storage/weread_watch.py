@@ -33,6 +33,7 @@ class WeReadWatchEntry:
     status: str
     created_at: str
     updated_at: str
+    notified_at: str | None = None
 
     def source_edition(self) -> Edition:
         return Edition(
@@ -46,11 +47,7 @@ class WeReadWatchEntry:
 
 
 class WeReadAvailabilityWatchStore:
-    """Persist unavailable WeRead matches for later read-only rechecks.
-
-    Stores only normalized book identity and the Feishu chat destination needed
-    for a future notification. It never stores API keys, Cookies, or raw provider payloads.
-    """
+    """Persist WeRead availability watches without storing credentials or raw payloads."""
 
     def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path).expanduser() if path is not None else default_weread_watch_db_path()
@@ -78,8 +75,8 @@ class WeReadAvailabilityWatchStore:
                 INSERT INTO weread_availability_watch(
                     chat_id, source_title, source_authors_json, source_publisher,
                     source_publish_date, source_douban_id, source_isbn,
-                    weread_book_id, weread_title, deep_link, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+                    weread_book_id, weread_title, deep_link, status, created_at, updated_at, notified_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL)
                 ON CONFLICT(chat_id, source_douban_id, source_title) DO UPDATE SET
                     source_authors_json=excluded.source_authors_json,
                     source_publisher=excluded.source_publisher,
@@ -89,6 +86,7 @@ class WeReadAvailabilityWatchStore:
                     weread_title=excluded.weread_title,
                     deep_link=excluded.deep_link,
                     status='pending',
+                    notified_at=NULL,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -108,8 +106,7 @@ class WeReadAvailabilityWatchStore:
             )
             conn.commit()
             row = conn.execute(
-                _SELECT_COLUMNS
-                + " WHERE chat_id=? AND source_title=? AND source_douban_id IS ?",
+                _SELECT_COLUMNS + " WHERE chat_id=? AND source_title=? AND source_douban_id IS ?",
                 (chat, source.title, source.douban_id),
             ).fetchone()
         assert row is not None
@@ -121,8 +118,18 @@ class WeReadAvailabilityWatchStore:
         self.initialize()
         with self._connect() as conn:
             rows = conn.execute(
+                _SELECT_COLUMNS + " WHERE status='pending' ORDER BY created_at ASC, id ASC"
+            ).fetchall()
+        return [_row_to_entry(row) for row in rows]
+
+    def unnotified_available(self) -> list[WeReadWatchEntry]:
+        if not self.path.exists():
+            return []
+        self.initialize()
+        with self._connect() as conn:
+            rows = conn.execute(
                 _SELECT_COLUMNS
-                + " WHERE status='pending' ORDER BY created_at ASC, id ASC"
+                + " WHERE status='available' AND notified_at IS NULL ORDER BY updated_at ASC, id ASC"
             ).fetchall()
         return [_row_to_entry(row) for row in rows]
 
@@ -145,13 +152,34 @@ class WeReadAvailabilityWatchStore:
                 """
                 UPDATE weread_availability_watch
                 SET weread_book_id=?, weread_title=?, deep_link=?,
-                    status='available', updated_at=?
+                    status='available', updated_at=?, notified_at=NULL
                 WHERE id=? AND status='pending'
                 """,
                 (weread.weread_id, weread.title, deep_link, now, entry_id),
             )
             if cursor.rowcount != 1:
                 raise ValueError("pending WeRead watch entry was not found")
+            conn.commit()
+            row = conn.execute(_SELECT_COLUMNS + " WHERE id=?", (entry_id,)).fetchone()
+        assert row is not None
+        return _row_to_entry(row)
+
+    def mark_notified(self, entry_id: int) -> WeReadWatchEntry:
+        if entry_id < 1:
+            raise ValueError("watch entry id must be >= 1")
+        now = datetime.now(timezone.utc).isoformat()
+        self.initialize()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE weread_availability_watch
+                SET notified_at=?, updated_at=?
+                WHERE id=? AND status='available' AND notified_at IS NULL
+                """,
+                (now, now, entry_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("unnotified available WeRead watch entry was not found")
             conn.commit()
             row = conn.execute(_SELECT_COLUMNS + " WHERE id=?", (entry_id,)).fetchone()
         assert row is not None
@@ -177,10 +205,14 @@ class WeReadAvailabilityWatchStore:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
+                    notified_at TEXT,
                     UNIQUE(chat_id, source_douban_id, source_title)
                 );
                 """
             )
+            columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(weread_availability_watch)")}
+            if "notified_at" not in columns:
+                conn.execute("ALTER TABLE weread_availability_watch ADD COLUMN notified_at TEXT")
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -190,7 +222,7 @@ class WeReadAvailabilityWatchStore:
 _SELECT_COLUMNS = """
 SELECT id, chat_id, source_title, source_authors_json, source_publisher,
        source_publish_date, source_douban_id, source_isbn,
-       weread_book_id, weread_title, deep_link, status, created_at, updated_at
+       weread_book_id, weread_title, deep_link, status, created_at, updated_at, notified_at
 FROM weread_availability_watch
 """
 
@@ -216,4 +248,5 @@ def _row_to_entry(row: tuple[object, ...]) -> WeReadWatchEntry:
         status=str(row[11]),
         created_at=str(row[12]),
         updated_at=str(row[13]),
+        notified_at=str(row[14]) if len(row) > 14 and row[14] is not None else None,
     )
