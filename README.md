@@ -15,7 +15,7 @@
 
 **不需要 OpenAI、Claude 或 Kimi API，也不会产生 LLM token 消耗。**
 
-> This project is self-hosted. Each user should create and use their own Feishu app, Douban session and WeRead session. Never share or commit real cookies or secrets.
+> This project is self-hosted. Each user should create and use their own Feishu app, Douban session and WeRead API key. Never share or commit real cookies or secrets.
 
 ## Requirements
 
@@ -24,7 +24,7 @@
 - Git
 - A Feishu app / bot if you want to use the chat interface
 - Your own Douban Cookie for authenticated Want-to-Read actions
-- Your own WeRead Cookie for WeRead availability / shelf features
+- Your own WeRead Agent API key for WeRead availability / shelf features
 
 ## Quick start
 
@@ -58,9 +58,11 @@ Fill in the values you actually use:
 FEISHU_APP_ID=
 FEISHU_APP_SECRET=
 DOUBAN_COOKIE=
-WEREAD_COOKIE=
+WEREAD_API_KEY=
 DATABASE_URL=sqlite:///data/douban-weread.db
 ```
+
+For step-by-step instructions on safely obtaining and storing the Douban Cookie and WeRead API key, see [docs/AUTH_SETUP.md](docs/AUTH_SETUP.md).
 
 Do **not** commit `.env` or paste real secrets into GitHub issues, screenshots or chat messages.
 
@@ -141,6 +143,7 @@ Authenticated actions use a user-owned browser Cookie stored only in the local e
 Check authentication first:
 
 ```bash
+douban-weread auth diagnose
 douban-weread auth check
 ```
 
@@ -152,7 +155,7 @@ douban-weread wish --subject <DOUBAN_SUBJECT_ID> --confirm
 
 Without `--confirm`, the command refuses to change state. After a write, the client reads the saved state back before reporting success.
 
-The authenticated Book interest route is an unofficial/internal interface and may change. See [docs/DOUBAN_AUTH.md](docs/DOUBAN_AUTH.md).
+See [docs/AUTH_SETUP.md](docs/AUTH_SETUP.md) for safe credential setup and [docs/DOUBAN_AUTH.md](docs/DOUBAN_AUTH.md) for the provider's authentication details.
 
 ## How matching works
 
@@ -180,7 +183,7 @@ The project tries to preserve the edition you discovered while aligning the prac
 This project is intended to be self-hosted.
 
 - Feishu App ID / Secret stay in your local `.env`.
-- Douban and WeRead cookies stay on your own machine.
+- Douban Cookie and WeRead API key stay on your own machine.
 - Local OCR uses RapidOCR / ONNX Runtime and does not send image OCR work to an LLM.
 - The current V1 does not call OpenAI, Anthropic/Claude or Kimi APIs.
 - Keeping the bot running uses some local memory and network connections, but does not consume LLM tokens.
