@@ -36,11 +36,27 @@ class FakeFlow:
         )
 
 
+class AlreadyWishFlow(FakeFlow):
+    def preflight(self, subject_id: str):
+        return SimpleNamespace(
+            kind=WishFlowKind.ALREADY_WISH,
+            subject_id=subject_id,
+            title=self.source.title,
+            message=f"《{self.source.title}》已经在豆瓣标记为想读，不需要重复添加。",
+            decision=SimpleNamespace(target=self.source),
+        )
+
+    def commit(self, subject_id: str):
+        raise AssertionError("already-wish confirmation must not write Douban")
+
+
 class FakeLookup:
     def __init__(self, result: WeReadLookupResult) -> None:
         self.result = result
+        self.calls: list[Edition] = []
 
     def lookup(self, source: Edition) -> WeReadLookupResult:
+        self.calls.append(source)
         return self.result
 
 
@@ -56,13 +72,13 @@ class FakeWatchStore:
         return object()
 
 
-def event() -> dict[str, object]:
+def event(*, action: str = "confirm_wish") -> dict[str, object]:
     return {
         "chat_id": "oc_chat",
         "message_id": "om_card",
         "action": {
             "value": {
-                "action": "confirm_wish",
+                "action": action,
                 "douban_subject_id": "123",
             }
         },
@@ -106,6 +122,38 @@ class FeishuWeReadWatchTests(unittest.TestCase):
         self.assertIs(store.calls[0]["weread"], weread)
         text = channel.sent[0][1]["text"]
         self.assertIn("已加入豆瓣想读", text)
+        self.assertIn("已加入「等待上架」列表", text)
+        self.assertEqual(response["toast"]["type"], "success")
+
+    def test_already_wish_still_runs_read_only_lookup_and_queues_unavailable(self) -> None:
+        source = Edition(title="非普通读者", authors=["艾伦·贝内特"], douban_id="123")
+        weread = Edition(title="非普通读者", weread_id="wr1")
+        lookup = FakeLookup(
+            WeReadLookupResult(
+                kind=WeReadLookupKind.UNAVAILABLE,
+                source_title=source.title,
+                selected_edition=weread,
+                deep_link="weread://book",
+                message="微信读书当前不可读。",
+            )
+        )
+        store = FakeWatchStore()
+        channel = FakeChannel()
+
+        response = asyncio.run(
+            _handle_card_action(
+                channel,
+                AlreadyWishFlow(source),
+                event(action="confirm_book"),
+                weread_lookup=lookup,
+                weread_watch_store=store,
+            )
+        )
+
+        self.assertEqual(lookup.calls, [source])
+        self.assertEqual(len(store.calls), 1)
+        text = channel.sent[0][1]["text"]
+        self.assertIn("已经在豆瓣标记为想读", text)
         self.assertIn("已加入「等待上架」列表", text)
         self.assertEqual(response["toast"]["type"], "success")
 
