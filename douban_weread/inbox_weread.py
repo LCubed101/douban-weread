@@ -50,6 +50,14 @@ class WeReadEditionLookup:
             self.provider,
             limit=self.search_limit,
         )
+        if aligned.intent.weread_status is WeReadStatus.NOT_FOUND and source_edition.isbn:
+            aligned = align_to_weread(
+                source_edition,
+                self.provider,
+                limit=self.search_limit,
+                search_keyword=source_edition.isbn,
+            )
+
         intent = aligned.intent
         selected = intent.selected_edition
         deep_link = intent.source_url
@@ -88,7 +96,7 @@ class WeReadEditionLookup:
             selected_edition=None,
             deep_link=None,
             message=(
-                f"微信读书暂未在当前搜索范围内找到《{source_edition.title}》的可读同 Work 版本。"
+                f"微信读书暂未通过标题或 ISBN 的当前有界搜索找到《{source_edition.title}》的同 Work 版本。"
                 "这不是对整个微信读书目录的绝对否定。"
             ),
         )
