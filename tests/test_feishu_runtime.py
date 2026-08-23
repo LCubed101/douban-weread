@@ -28,9 +28,9 @@ class FakeWorker:
 
 
 class FeishuRuntimeTests(unittest.TestCase):
-    def test_default_interval_is_24_hours(self) -> None:
+    def test_default_interval_is_7_days(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(watch_interval_seconds(), 86400.0)
+            self.assertEqual(watch_interval_seconds(), 604800.0)
 
     def test_interval_can_be_overridden(self) -> None:
         with patch.dict(os.environ, {"DOUBAN_WEREAD_WATCH_INTERVAL_SECONDS": "3600"}, clear=True):
@@ -44,7 +44,7 @@ class FeishuRuntimeTests(unittest.TestCase):
     def test_runtime_connects_channel_and_cancels_background_loop_on_exit(self) -> None:
         channel = FakeChannel()
         worker = FakeWorker()
-        asyncio.run(run_runtime(channel, worker, interval_seconds=86400))
+        asyncio.run(run_runtime(channel, worker, interval_seconds=604800))
         self.assertTrue(channel.connected)
 
 
