@@ -7,6 +7,7 @@ import sys
 
 from douban_weread.feishu_bot import ChannelLike, build_bot
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
+from douban_weread.safe_logging import install_log_redaction
 from douban_weread.weread_watch_worker import WeReadWatchWorker
 
 
@@ -42,6 +43,7 @@ async def run_runtime(
 
 
 def main() -> None:
+    install_log_redaction()
     try:
         channel = build_bot()
         interval = watch_interval_seconds()
