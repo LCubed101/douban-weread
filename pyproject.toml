@@ -13,6 +13,7 @@ authors = [{name = "douban-weread contributors"}]
 dependencies = [
   "lark-channel-sdk>=1.0,<2",
   "lark-oapi>=1.4,<2",
+  "rapidocr-onnxruntime>=1.3,<2",
 ]
 
 [project.scripts]

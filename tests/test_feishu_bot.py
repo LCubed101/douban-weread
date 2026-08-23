@@ -514,7 +514,7 @@ class FeishuBotTests(unittest.TestCase):
         recognizer = FakeRecognizer(("微信", "回复", "评论", "2026"))
         message = FakeMessage(raw_content_type="image", resources=[FakeResource()])
         asyncio.run(_handle_message(channel, service, message, image_recognizer=recognizer))
-        self.assertIn("还不能稳定确定", channel.sent[0][1]["text"])
+        self.assertIn("暂时没认准是哪本书", channel.sent[0][1]["text"])
 
 
 if __name__ == "__main__":

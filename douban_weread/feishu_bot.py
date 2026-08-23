@@ -11,6 +11,7 @@ from douban_weread.adapters.feishu import (
     build_wish_confirmation_card,
 )
 from douban_weread.adapters.feishu_ocr import FeishuImageOcr, FeishuOcrError, ImageTextRecognizer
+from douban_weread.adapters.local_ocr import LocalImageOcr, LocalOcrError
 from douban_weread.core.models import Edition
 from douban_weread.inbox import (
     BookInboxConfirmation,
@@ -130,7 +131,7 @@ def build_bot(
     app_id, app_secret = _credentials()
     channel = channel_factory(app_id, app_secret)
     service = inbox_service or BookInboxService(DoubanBookSearchClient(), search_limit=5)
-    recognizer = image_recognizer or FeishuImageOcr(app_id=app_id, app_secret=app_secret)
+    recognizer = image_recognizer or LocalImageOcr()
     flow = wish_flow or DoubanWishFlow()
     lookup = weread_lookup or WeReadEditionLookup()
     watch_store = weread_watch_store or default_watch_store()
@@ -145,7 +146,7 @@ def build_bot(
                 image_recognizer=recognizer,
                 candidate_store=candidate_store,
             )
-        except (DoubanProviderError, FeishuOcrError) as exc:
+        except (DoubanProviderError, FeishuOcrError, LocalOcrError) as exc:
             await channel.send(
                 message.chat_id,
                 {"text": f"书籍识别暂时失败：{exc}"},
@@ -454,7 +455,7 @@ async def _handle_image_message(
     if not hint.usable:
         await channel.send(
             message.chat_id,
-            {"text": "已经识别图片文字，但还不能稳定确定书名或 ISBN。请尽量拍清楚封面、版权页或条码。"},
+            {"text": "已识别到图片文字，但暂时没认准是哪本书。\n你可以直接发送：\n• 书名\n• ISBN\n• 豆瓣图书链接\n• 或再拍一张版权页 / 条码页"},
             {"reply_to": message.message_id},
         )
         return
