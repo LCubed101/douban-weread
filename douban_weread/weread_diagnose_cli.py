@@ -21,13 +21,17 @@ class WeReadDiagnosticProvider(Protocol):
 class DoubanEditionProvider(Protocol):
     def get_by_subject_id(self, subject_id: str) -> Edition | None: ...
 
+    def search_by_isbn(self, isbn: str) -> Edition | None: ...
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="douban-weread weread diagnose",
         description="Read-only diagnostic for Douban→WeRead Edition resolution.",
     )
-    parser.add_argument("--subject", required=True, help="Exact Douban Book subject ID.")
+    identity = parser.add_mutually_exclusive_group(required=True)
+    identity.add_argument("--subject", help="Exact Douban Book subject ID.")
+    identity.add_argument("--isbn", help="Exact ISBN for the Douban Edition.")
     parser.add_argument("--limit", type=int, default=20, help="Maximum WeRead search candidates to inspect.")
     return parser
 
@@ -45,12 +49,17 @@ def run(
     douban = douban_provider or DoubanBookSearchClient()
 
     try:
-        source = douban.get_by_subject_id(args.subject)
+        source = (
+            douban.get_by_subject_id(args.subject)
+            if args.subject
+            else douban.search_by_isbn(args.isbn)
+        )
     except (DoubanProviderError, ValueError) as exc:
         print(f"Douban provider error: {exc}", file=stderr)
         return 1
     if source is None:
-        print(f"No Douban Edition found for subject {args.subject}.", file=stdout)
+        identity = f"subject {args.subject}" if args.subject else f"ISBN {args.isbn}"
+        print(f"No Douban Edition found for {identity}.", file=stdout)
         return 3
 
     limit = max(1, min(args.limit, 100))
