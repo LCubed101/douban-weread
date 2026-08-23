@@ -4,6 +4,7 @@ import asyncio
 import os
 import unittest
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from douban_weread.core.models import Edition
@@ -15,6 +16,7 @@ from douban_weread.feishu_bot import (
 )
 from douban_weread.inbox import BookInboxService
 from douban_weread.inbox_wish import WishFlowKind, WishFlowResult
+from douban_weread.providers.weread import WeReadProviderError
 
 
 class FakeDouban:
@@ -160,6 +162,20 @@ class FakeWishFlow:
         return self.commit_result
 
 
+class FakeWeReadLookup:
+    def __init__(self, *, error: Exception | None = None) -> None:
+        self.calls: list[Edition] = []
+        self.error = error
+
+    def lookup(self, source_edition: Edition):
+        self.calls.append(source_edition)
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(
+            message="微信读书：没有找到完全相同版本，但找到了同一作品的可读版本。\n三体1 · 刘慈欣"
+        )
+
+
 class FeishuBotTests(unittest.TestCase):
     def test_build_bot_requires_local_credentials(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -178,6 +194,7 @@ class FeishuBotTests(unittest.TestCase):
                 inbox_service=BookInboxService(FakeDouban()),
                 image_recognizer=FakeRecognizer(("三体",)),
                 wish_flow=FakeWishFlow(),
+                weread_lookup=FakeWeReadLookup(),
             )
         self.assertIs(result, channel)
         self.assertEqual(set(channel.handlers), {"message", "cardAction", "error"})
@@ -330,6 +347,67 @@ class FeishuBotTests(unittest.TestCase):
         self.assertEqual(flow.commit_calls, ["2567698"])
         self.assertIn("已加入豆瓣想读", channel.sent[0][1]["text"])
         self.assertEqual(response["toast"]["type"], "success")
+
+    def test_verified_write_is_followed_by_read_only_weread_lookup(self) -> None:
+        channel = FakeChannel()
+        flow = FakeWishFlow()
+        source = Edition(
+            title="三体",
+            authors=["刘慈欣"],
+            isbn="9787536692930",
+            douban_id="2567698",
+        )
+        flow.commit_result = WishFlowResult(
+            kind=WishFlowKind.WRITTEN,
+            subject_id="2567698",
+            title="三体",
+            message="《三体》已加入豆瓣想读，并完成写后验证。",
+            decision=SimpleNamespace(target=source),
+        )
+        lookup = FakeWeReadLookup()
+        event = FakeCardEvent(
+            action=FakeAction(
+                {"action": "confirm_wish", "douban_subject_id": "2567698"}
+            )
+        )
+
+        response = asyncio.run(
+            _handle_card_action(channel, flow, event, weread_lookup=lookup)
+        )
+
+        self.assertEqual(lookup.calls, [source])
+        self.assertIn("已加入豆瓣想读", channel.sent[0][1]["text"])
+        self.assertIn("微信读书", channel.sent[0][1]["text"])
+        self.assertIn("可读版本", channel.sent[0][1]["text"])
+        self.assertEqual(response["toast"]["type"], "success")
+
+    def test_weread_lookup_failure_does_not_reclassify_verified_douban_write_as_failed(self) -> None:
+        channel = FakeChannel()
+        flow = FakeWishFlow()
+        source = Edition(title="三体", authors=["刘慈欣"], douban_id="2567698")
+        flow.commit_result = WishFlowResult(
+            kind=WishFlowKind.WRITTEN,
+            subject_id="2567698",
+            title="三体",
+            message="《三体》已加入豆瓣想读，并完成写后验证。",
+            decision=SimpleNamespace(target=source),
+        )
+        lookup = FakeWeReadLookup(error=WeReadProviderError("temporary lookup failure"))
+        event = FakeCardEvent(
+            action=FakeAction(
+                {"action": "confirm_wish", "douban_subject_id": "2567698"}
+            )
+        )
+
+        response = asyncio.run(
+            _handle_card_action(channel, flow, event, weread_lookup=lookup)
+        )
+
+        text = channel.sent[0][1]["text"]
+        self.assertIn("已加入豆瓣想读", text)
+        self.assertIn("微信读书查找暂时失败", text)
+        self.assertIn("不需要重复点击", text)
+        self.assertEqual(response["toast"]["type"], "warning")
 
     def test_cancel_card_action_never_calls_wish_flow(self) -> None:
         channel = FakeChannel()
