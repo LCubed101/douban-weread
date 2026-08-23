@@ -24,6 +24,7 @@ class ProductActionKind(str, Enum):
     REVIEW_STATE = "review_state"
     OPEN_WEREAD = "open_weread"
     UPDATE_DOUBAN_STATE = "update_douban_state"
+    REMIND_DOUBAN_WRAP_UP = "remind_douban_wrap_up"
     NONE = "none"
 
 
@@ -102,7 +103,7 @@ _ACTION_BY_PLAN = {
     UserPlanKind.ADD_TO_WEREAD_SHELF_ALTERNATIVE: ProductActionKind.OPEN_WEREAD,
     UserPlanKind.SUGGEST_DOUBAN_WISH: ProductActionKind.UPDATE_DOUBAN_STATE,
     UserPlanKind.SUGGEST_DOUBAN_READING: ProductActionKind.UPDATE_DOUBAN_STATE,
-    UserPlanKind.SUGGEST_DOUBAN_READ: ProductActionKind.UPDATE_DOUBAN_STATE,
+    UserPlanKind.REMIND_DOUBAN_WRAP_UP: ProductActionKind.REMIND_DOUBAN_WRAP_UP,
     UserPlanKind.ALIGNED: ProductActionKind.NONE,
     UserPlanKind.KEEP_DOUBAN_HISTORY: ProductActionKind.NONE,
     UserPlanKind.WEREAD_NOT_FOUND: ProductActionKind.NONE,
