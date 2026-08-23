@@ -5,6 +5,9 @@ from typing import Protocol
 
 
 FEISHU_OCR_RATE_LIMIT_CODE = 99991400
+FEISHU_OCR_RATE_LIMIT_MESSAGE = (
+    "图片已收到，但飞书 OCR 当前请求受限。请稍后重试，或直接发送书名 / ISBN / 豆瓣链接。"
+)
 
 
 class ImageTextRecognizer(Protocol):
@@ -61,10 +64,12 @@ class FeishuImageOcr:
         response = await self._client.optical_char_recognition.v1.image.abasic_recognize(request)
         if not response.success():
             code = int(response.code) if response.code is not None else None
-            raise FeishuOcrError(
-                f"Feishu OCR failed with code {response.code}: {response.msg}",
-                code=code,
+            message = (
+                FEISHU_OCR_RATE_LIMIT_MESSAGE
+                if code == FEISHU_OCR_RATE_LIMIT_CODE
+                else f"Feishu OCR failed with code {response.code}: {response.msg}"
             )
+            raise FeishuOcrError(message, code=code)
         data = response.data
         lines = getattr(data, "text_list", None) if data is not None else None
         return tuple(str(line).strip() for line in (lines or []) if str(line).strip())
