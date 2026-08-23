@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 from unittest.mock import patch
 
 from douban_weread.core.models import Edition
-from douban_weread.feishu_bot import _handle_message, build_bot
+from douban_weread.feishu_bot import _handle_card_action, _handle_message, build_bot
 from douban_weread.inbox import BookInboxService
+from douban_weread.inbox_wish import WishFlowKind, WishFlowResult
 
 
 class FakeDouban:
@@ -79,6 +80,22 @@ class FakeMessage:
     resources: list[FakeResource] = field(default_factory=list)
 
 
+@dataclass
+class FakeAction:
+    value: dict[str, str]
+
+
+@dataclass
+class FakeCardEvent:
+    chat_id: str = "oc_chat"
+    message_id: str = "om_card"
+    action: FakeAction = field(
+        default_factory=lambda: FakeAction(
+            {"action": "confirm_book", "douban_subject_id": "2567698"}
+        )
+    )
+
+
 class FakeRecognizer:
     def __init__(self, lines: tuple[str, ...]) -> None:
         self.lines = lines
@@ -87,6 +104,32 @@ class FakeRecognizer:
     async def recognize(self, image_bytes: bytes) -> tuple[str, ...]:
         self.images.append(image_bytes)
         return self.lines
+
+
+class FakeWishFlow:
+    def __init__(self) -> None:
+        self.preflight_calls: list[str] = []
+        self.commit_calls: list[str] = []
+        self.preflight_result = WishFlowResult(
+            kind=WishFlowKind.READY,
+            subject_id="2567698",
+            title="三体",
+            message="ready",
+        )
+        self.commit_result = WishFlowResult(
+            kind=WishFlowKind.WRITTEN,
+            subject_id="2567698",
+            title="三体",
+            message="《三体》已加入豆瓣想读，并完成写后验证。",
+        )
+
+    def preflight(self, subject_id: str) -> WishFlowResult:
+        self.preflight_calls.append(subject_id)
+        return self.preflight_result
+
+    def commit(self, subject_id: str) -> WishFlowResult:
+        self.commit_calls.append(subject_id)
+        return self.commit_result
 
 
 class FeishuBotTests(unittest.TestCase):
@@ -106,6 +149,7 @@ class FeishuBotTests(unittest.TestCase):
                 channel_factory=lambda app_id, secret: channel,
                 inbox_service=BookInboxService(FakeDouban()),
                 image_recognizer=FakeRecognizer(("三体",)),
+                wish_flow=FakeWishFlow(),
             )
         self.assertIs(result, channel)
         self.assertEqual(set(channel.handlers), {"message", "cardAction", "error"})
@@ -119,6 +163,56 @@ class FeishuBotTests(unittest.TestCase):
         self.assertEqual(chat_id, "oc_chat")
         self.assertIn("card", payload)
         self.assertEqual(opts, {"reply_to": "om_msg"})
+
+    def test_first_card_confirmation_only_preflights_and_sends_second_card(self) -> None:
+        channel = FakeChannel()
+        flow = FakeWishFlow()
+        response = asyncio.run(_handle_card_action(channel, flow, FakeCardEvent()))
+
+        self.assertEqual(flow.preflight_calls, ["2567698"])
+        self.assertEqual(flow.commit_calls, [])
+        self.assertEqual(len(channel.sent), 1)
+        self.assertIn("card", channel.sent[0][1])
+        actions = channel.sent[0][1]["card"]["elements"][1]["actions"]
+        self.assertEqual(actions[0]["value"]["action"], "confirm_wish")
+        self.assertEqual(response["toast"]["type"], "info")
+
+    def test_second_card_confirmation_commits_wish(self) -> None:
+        channel = FakeChannel()
+        flow = FakeWishFlow()
+        event = FakeCardEvent(
+            action=FakeAction(
+                {"action": "confirm_wish", "douban_subject_id": "2567698"}
+            )
+        )
+        response = asyncio.run(_handle_card_action(channel, flow, event))
+
+        self.assertEqual(flow.preflight_calls, [])
+        self.assertEqual(flow.commit_calls, ["2567698"])
+        self.assertIn("已加入豆瓣想读", channel.sent[0][1]["text"])
+        self.assertEqual(response["toast"]["type"], "success")
+
+    def test_cancel_card_action_never_calls_wish_flow(self) -> None:
+        channel = FakeChannel()
+        flow = FakeWishFlow()
+        event = FakeCardEvent(
+            action=FakeAction(
+                {"action": "cancel_wish", "douban_subject_id": "2567698"}
+            )
+        )
+        response = asyncio.run(_handle_card_action(channel, flow, event))
+        self.assertEqual(flow.preflight_calls, [])
+        self.assertEqual(flow.commit_calls, [])
+        self.assertEqual(channel.sent, [])
+        self.assertEqual(response["toast"]["type"], "info")
+
+    def test_card_action_without_subject_fails_closed(self) -> None:
+        channel = FakeChannel()
+        flow = FakeWishFlow()
+        event = FakeCardEvent(action=FakeAction({"action": "confirm_wish"}))
+        response = asyncio.run(_handle_card_action(channel, flow, event))
+        self.assertEqual(flow.commit_calls, [])
+        self.assertEqual(response["toast"]["type"], "error")
 
     def test_image_with_isbn_downloads_ocr_and_sends_exact_confirmation(self) -> None:
         channel = FakeChannel()
@@ -202,9 +296,7 @@ class FeishuBotTests(unittest.TestCase):
         service = BookInboxService(FakeDouban())
         recognizer = FakeRecognizer(("微信", "回复", "评论", "2026"))
         message = FakeMessage(raw_content_type="image", resources=[FakeResource()])
-        asyncio.run(
-            _handle_message(channel, service, message, image_recognizer=recognizer)
-        )
+        asyncio.run(_handle_message(channel, service, message, image_recognizer=recognizer))
         self.assertIn("还不能稳定确定", channel.sent[0][1]["text"])
 
 
