@@ -9,6 +9,11 @@ def main() -> None:
 
         raise SystemExit(run_weread_capabilities(sys.argv[3:]))
 
+    if len(sys.argv) > 2 and sys.argv[1:3] == ["weread", "diagnose"]:
+        from douban_weread.weread_diagnose_cli import run as run_weread_diagnose
+
+        raise SystemExit(run_weread_diagnose(sys.argv[3:]))
+
     if len(sys.argv) > 2 and sys.argv[1:3] == ["weread", "watch"]:
         from douban_weread.weread_watch_cli import run as run_weread_watch
 
