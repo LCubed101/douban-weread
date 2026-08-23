@@ -82,6 +82,8 @@ The title search may return multiple editions so you can compare translator, pub
 
 ## Run the Feishu bot
 
+If this is your first time creating a Feishu bot, follow the step-by-step guide first: [docs/FEISHU_SETUP.md](docs/FEISHU_SETUP.md).
+
 After configuring your own Feishu app credentials in `.env`:
 
 ```bash
