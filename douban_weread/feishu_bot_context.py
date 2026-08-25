@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from typing import Any
 
@@ -12,6 +13,80 @@ from douban_weread.inbox_weread import WeReadEditionLookup
 from douban_weread.inbox_weread_watch import WeReadWatchStoreLike, default_watch_store
 from douban_weread.inbox_wish import DoubanWishFlow, WISH_FLOW_ERRORS
 from douban_weread.providers.douban import DoubanBookSearchClient, DoubanProviderError
+
+
+_WEREAD_LINK_RE = re.compile(r"^可读链接：(?P<url>\S+)\s*$", re.MULTILINE)
+
+
+def _callback_card(raw_card: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a raw card in Feishu's card-action callback response schema."""
+
+    return {"type": "raw", "data": raw_card}
+
+
+def _weread_link_card(text: str, deep_link: str) -> dict[str, Any]:
+    cleaned = _WEREAD_LINK_RE.sub("", text).strip()
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": False},
+        "header": {
+            "title": {"tag": "plain_text", "content": "微信读书可读版本"},
+            "template": "green",
+        },
+        "elements": [
+            {"tag": "markdown", "content": cleaned},
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "打开微信读书"},
+                        "type": "primary",
+                        "url": deep_link,
+                    }
+                ],
+            },
+        ],
+    }
+
+
+def _enhance_outbound_message(message: object) -> object:
+    if not isinstance(message, dict):
+        return message
+    text = message.get("text")
+    if not isinstance(text, str):
+        return message
+    match = _WEREAD_LINK_RE.search(text)
+    if match is None:
+        return message
+    return {"card": _weread_link_card(text, match.group("url"))}
+
+
+class _UiChannel:
+    """Delegate channel behavior while upgrading user-visible WeRead links to cards."""
+
+    def __init__(self, inner: base.ChannelLike) -> None:
+        self._inner = inner
+
+    def on(self, event: str, handler):
+        return self._inner.on(event, handler)
+
+    async def connect(self) -> None:
+        await self._inner.connect()
+
+    async def send(self, to: str, message: object, opts: object | None = None):
+        return await self._inner.send(to, _enhance_outbound_message(message), opts)
+
+    async def download_resource(
+        self,
+        file_key: str,
+        resource_type: str = "image",
+        message_id: str | None = None,
+    ):
+        return await self._inner.download_resource(
+            file_key,
+            resource_type=resource_type,
+            message_id=message_id,
+        )
 
 
 def _end_search_card() -> dict[str, Any]:
@@ -61,21 +136,22 @@ async def _end_search(
     chat_id = base._card_event_text(event, "chat_id")
     if chat_id:
         candidate_store.clear(chat_id)
+    raw_card = {
+        "config": {"wide_screen_mode": True, "update_multi": False},
+        "header": {
+            "title": {"tag": "plain_text", "content": "本次找书已结束"},
+            "template": "grey",
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": "✅ 已清空当前版本选择。\n现在直接发送新的书名、ISBN 或豆瓣图书链接即可。",
+            }
+        ],
+    }
     return {
         "toast": {"type": "success", "content": "本次找书已结束。"},
-        "card": {
-            "config": {"wide_screen_mode": True, "update_multi": False},
-            "header": {
-                "title": {"tag": "plain_text", "content": "本次找书已结束"},
-                "template": "grey",
-            },
-            "elements": [
-                {
-                    "tag": "markdown",
-                    "content": "✅ 已清空当前版本选择。\n现在直接发送新的书名、ISBN 或豆瓣图书链接即可。",
-                }
-            ],
-        },
+        "card": _callback_card(raw_card),
     }
 
 
@@ -114,21 +190,22 @@ async def _return_to_candidates(
         {"reply_to": message_id} if message_id else None,
     )
     await _send_end_search_control(channel, chat_id, reply_to=message_id or None)
+    raw_card = {
+        "config": {"wide_screen_mode": True, "update_multi": False},
+        "header": {
+            "title": {"tag": "plain_text", "content": "已取消这个版本"},
+            "template": "grey",
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": "↩️ 已返回上一层候选版本，请继续回复数字选择。",
+            }
+        ],
+    }
     return {
         "toast": {"type": "info", "content": "已返回版本列表。"},
-        "card": {
-            "config": {"wide_screen_mode": True, "update_multi": False},
-            "header": {
-                "title": {"tag": "plain_text", "content": "已取消这个版本"},
-                "template": "grey",
-            },
-            "elements": [
-                {
-                    "tag": "markdown",
-                    "content": "↩️ 已返回上一层候选版本，请继续回复数字选择。",
-                }
-            ],
-        },
+        "card": _callback_card(raw_card),
     }
 
 
@@ -142,7 +219,8 @@ def build_bot(
     weread_watch_store: WeReadWatchStoreLike | None = None,
 ) -> base.ChannelLike:
     app_id, app_secret = base._credentials()
-    channel = channel_factory(app_id, app_secret)
+    raw_channel = channel_factory(app_id, app_secret)
+    channel = _UiChannel(raw_channel)
     service = inbox_service or BookInboxService(DoubanBookSearchClient(), search_limit=5)
     recognizer = image_recognizer or LocalImageOcr()
     flow = wish_flow or DoubanWishFlow()
@@ -210,7 +288,7 @@ def build_bot(
             )
             return {
                 "toast": {"type": "info", "content": "已收到，正在处理…"},
-                "card": base._processing_card(action),
+                "card": _callback_card(base._processing_card(action)),
             }
 
         try:

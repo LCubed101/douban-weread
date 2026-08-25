@@ -55,6 +55,8 @@ class RejectBookContextTest(unittest.TestCase):
         control = channel.sent[1][1]["card"]
         self.assertEqual(control["elements"][1]["actions"][0]["type"], "danger")
         self.assertEqual(control["elements"][1]["actions"][0]["value"]["action"], "end_search")
+        self.assertEqual(result["card"]["type"], "raw")
+        self.assertEqual(result["card"]["data"]["header"]["template"], "grey")
         self.assertEqual(len(store.get("chat-1")), 2)
 
     def test_end_search_clears_candidate_context(self) -> None:
@@ -70,8 +72,10 @@ class RejectBookContextTest(unittest.TestCase):
 
         self.assertEqual(store.get("chat-1"), ())
         self.assertEqual(result["toast"]["content"], "本次找书已结束。")
-        self.assertEqual(result["card"]["header"]["template"], "grey")
-        self.assertIn("发送新的书名", result["card"]["elements"][0]["content"])
+        self.assertEqual(result["card"]["type"], "raw")
+        card = result["card"]["data"]
+        self.assertEqual(card["header"]["template"], "grey")
+        self.assertIn("发送新的书名", card["elements"][0]["content"])
 
     def test_end_search_button_has_colored_contrast(self) -> None:
         card = _end_search_card()
