@@ -14,6 +14,71 @@ from douban_weread.inbox_wish import DoubanWishFlow, WISH_FLOW_ERRORS
 from douban_weread.providers.douban import DoubanBookSearchClient, DoubanProviderError
 
 
+def _end_search_card() -> dict[str, Any]:
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": False},
+        "header": {
+            "title": {"tag": "plain_text", "content": "当前找书会话"},
+            "template": "grey",
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": "如果不想继续选择当前这些版本，可以直接结束，再发送新的书名。",
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "结束本次找书"},
+                        "type": "danger",
+                        "value": {"action": "end_search"},
+                    }
+                ],
+            },
+        ],
+    }
+
+
+async def _send_end_search_control(
+    channel: base.ChannelLike,
+    chat_id: str,
+    *,
+    reply_to: str | None = None,
+) -> None:
+    await channel.send(
+        chat_id,
+        {"card": _end_search_card()},
+        {"reply_to": reply_to} if reply_to else None,
+    )
+
+
+async def _end_search(
+    candidate_store: base.CandidateSelectionStore,
+    event: object,
+) -> dict[str, Any]:
+    chat_id = base._card_event_text(event, "chat_id")
+    if chat_id:
+        candidate_store.clear(chat_id)
+    return {
+        "toast": {"type": "success", "content": "本次找书已结束。"},
+        "card": {
+            "config": {"wide_screen_mode": True, "update_multi": False},
+            "header": {
+                "title": {"tag": "plain_text", "content": "本次找书已结束"},
+                "template": "grey",
+            },
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": "✅ 已清空当前版本选择。\n现在直接发送新的书名、ISBN 或豆瓣图书链接即可。",
+                }
+            ],
+        },
+    }
+
+
 async def _return_to_candidates(
     channel: base.ChannelLike,
     event: object,
@@ -48,6 +113,7 @@ async def _return_to_candidates(
         },
         {"reply_to": message_id} if message_id else None,
     )
+    await _send_end_search_control(channel, chat_id, reply_to=message_id or None)
     return {
         "toast": {"type": "info", "content": "已返回版本列表。"},
         "card": {
@@ -94,6 +160,13 @@ def build_bot(
                 candidate_store=candidate_store,
                 weread_lookup=lookup,
             )
+            text = " ".join(message.content_text.split()).strip()
+            if candidate_store.get(message.chat_id) and not text.isdigit():
+                await _send_end_search_control(
+                    channel,
+                    message.chat_id,
+                    reply_to=message.message_id,
+                )
         except (DoubanProviderError, FeishuOcrError, LocalOcrError) as exc:
             await channel.send(
                 message.chat_id,
@@ -113,6 +186,9 @@ def build_bot(
         action = str(value.get("action") or "").strip()
         chat_id = base._card_event_text(event, "chat_id")
         subject_id = str(value.get("douban_subject_id") or "").strip()
+
+        if action == "end_search":
+            return await _end_search(candidate_store, event)
 
         if action == "reject_book":
             return await _return_to_candidates(
