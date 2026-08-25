@@ -112,6 +112,29 @@ def _is_weread_shelf_command(text: str) -> bool:
     return normalized in _WEREAD_SHELF_COMMANDS
 
 
+def _processing_card(action: str) -> dict[str, Any]:
+    if action == "confirm_wish":
+        clicked = "加入豆瓣想读"
+        progress = "正在写入豆瓣并做写后验证，请稍候…"
+    else:
+        clicked = "确认这本"
+        progress = "正在检查版本与豆瓣历史状态，请稍候…"
+
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": False},
+        "header": {
+            "title": {"tag": "plain_text", "content": "已收到操作"},
+            "template": "grey",
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": f"✅ 已点击 **{clicked}**\n{progress}\n\n处理结果会继续回复在当前对话中。",
+            }
+        ],
+    }
+
+
 def _default_channel_factory(app_id: str, app_secret: str) -> ChannelLike:
     try:
         from lark_channel import FeishuChannel
@@ -174,6 +197,26 @@ def build_bot(
             )
 
     async def on_card_action(event: object):
+        value = _card_action_value(event)
+        action = str(value.get("action") or "").strip()
+        chat_id = _card_event_text(event, "chat_id")
+        subject_id = str(value.get("douban_subject_id") or "").strip()
+
+        if action in {"confirm_book", "confirm_wish"} and chat_id and subject_id:
+            asyncio.create_task(
+                _run_card_action_after_ack(
+                    channel,
+                    flow,
+                    event,
+                    weread_lookup=lookup,
+                    weread_watch_store=watch_store,
+                )
+            )
+            return {
+                "toast": {"type": "info", "content": "已收到，正在处理…"},
+                "card": _processing_card(action),
+            }
+
         try:
             return await _handle_card_action(
                 channel,
@@ -183,7 +226,6 @@ def build_bot(
                 weread_watch_store=watch_store,
             )
         except WISH_FLOW_ERRORS as exc:
-            chat_id = _card_event_text(event, "chat_id")
             message_id = _card_event_text(event, "message_id")
             if chat_id:
                 await channel.send(
@@ -203,6 +245,43 @@ def build_bot(
     channel.on("cardAction", on_card_action)
     channel.on("error", on_error)
     return channel
+
+
+async def _run_card_action_after_ack(
+    channel: ChannelLike,
+    flow: WishFlowLike,
+    event: object,
+    *,
+    weread_lookup: WeReadLookupLike | None = None,
+    weread_watch_store: WeReadWatchStoreLike | None = None,
+) -> None:
+    try:
+        await _handle_card_action(
+            channel,
+            flow,
+            event,
+            weread_lookup=weread_lookup,
+            weread_watch_store=weread_watch_store,
+        )
+    except WISH_FLOW_ERRORS as exc:
+        chat_id = _card_event_text(event, "chat_id")
+        message_id = _card_event_text(event, "message_id")
+        if chat_id:
+            await channel.send(
+                chat_id,
+                {"text": f"豆瓣想读操作未执行：{exc}"},
+                {"reply_to": message_id} if message_id else None,
+            )
+    except Exception as exc:
+        print(f"Feishu background card action error: {type(exc).__name__}", file=sys.stderr)
+        chat_id = _card_event_text(event, "chat_id")
+        message_id = _card_event_text(event, "message_id")
+        if chat_id:
+            await channel.send(
+                chat_id,
+                {"text": "这次操作没有执行，请稍后再试。"},
+                {"reply_to": message_id} if message_id else None,
+            )
 
 
 async def _handle_card_action(
