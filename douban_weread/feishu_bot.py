@@ -24,6 +24,7 @@ from douban_weread.inbox_ocr import extract_book_hint
 from douban_weread.inbox_weread import (
     WEREAD_LOOKUP_ERRORS,
     WeReadEditionLookup,
+    WeReadLookupKind,
 )
 from douban_weread.inbox_weread_watch import (
     WeReadWatchStoreLike,
@@ -106,10 +107,23 @@ _WEREAD_SHELF_COMMANDS = {
     "打开微信读书",
 }
 
+_RESELECT_EDITION_COMMANDS = {
+    "重新选择",
+    "重新选版本",
+    "重新选择版本",
+    "重新选择豆瓣版本",
+    "换一个豆瓣版本",
+}
+
 
 def _is_weread_shelf_command(text: str) -> bool:
     normalized = "".join(text.split()).strip("。！!？?")
     return normalized in _WEREAD_SHELF_COMMANDS
+
+
+def _is_reselect_edition_command(text: str) -> bool:
+    normalized = "".join(text.split()).strip("。！!？?")
+    return normalized in _RESELECT_EDITION_COMMANDS
 
 
 def _processing_card(action: str) -> dict[str, Any]:
@@ -133,6 +147,76 @@ def _processing_card(action: str) -> dict[str, Any]:
             }
         ],
     }
+
+
+def _format_weread_candidate_status(result: object | None) -> str:
+    if result is None:
+        return "⚪ 微信读书：暂时无法查询"
+
+    kind = getattr(result, "kind", None)
+    if kind is WeReadLookupKind.EXACT:
+        return "✅ 微信读书：有同版可读"
+    if kind is WeReadLookupKind.ALTERNATIVE:
+        selected = getattr(result, "selected_edition", None)
+        if selected is not None:
+            details = " · ".join(
+                value
+                for value in (
+                    getattr(selected, "title", None),
+                    getattr(selected, "publisher", None),
+                    getattr(selected, "publish_date", None),
+                )
+                if value
+            )
+            if details:
+                return f"🟡 微信读书：有同一作品的其他版本｜{details}"
+        return "🟡 微信读书：有同一作品的其他版本"
+    if kind is WeReadLookupKind.UNAVAILABLE:
+        return "⚪ 微信读书：找到同一作品，但当前不可读"
+    return "⚪ 微信读书：暂未找到可读版本"
+
+
+async def _lookup_candidate_statuses(
+    candidates: Sequence[Edition],
+    weread_lookup: WeReadLookupLike | None,
+) -> tuple[str, ...]:
+    if weread_lookup is None:
+        return tuple("⚪ 微信读书：未配置查询" for _ in candidates)
+
+    async def one(edition: Edition) -> str:
+        try:
+            result = await asyncio.to_thread(weread_lookup.lookup, edition)
+        except WEREAD_LOOKUP_ERRORS:
+            return "⚪ 微信读书：暂时无法查询"
+        return _format_weread_candidate_status(result)
+
+    return tuple(await asyncio.gather(*(one(edition) for edition in candidates)))
+
+
+def _candidate_list_text(
+    candidates: Sequence[Edition],
+    *,
+    heading: str = "找到多个豆瓣版本：",
+    weread_statuses: Sequence[str] | None = None,
+) -> str:
+    lines = [heading]
+    for index, edition in enumerate(candidates, start=1):
+        details = " · ".join(
+            value
+            for value in (
+                "、".join(edition.authors) if edition.authors else None,
+                edition.publisher,
+                edition.publish_date,
+                edition.isbn,
+            )
+            if value
+        )
+        lines.append(f"{index}. {edition.title}" + (f"｜{details}" if details else ""))
+        if weread_statuses is not None and index <= len(weread_statuses):
+            lines.append(f"   {weread_statuses[index - 1]}")
+    lines.append(f"回复 1–{len(candidates)} 选择豆瓣版本；也可以发送 ISBN 或豆瓣图书链接。")
+    lines.append("如果选完后想换版本，发送「重新选择豆瓣版本」。")
+    return "\n".join(lines)
 
 
 def _default_channel_factory(app_id: str, app_secret: str) -> ChannelLike:
@@ -181,6 +265,7 @@ def build_bot(
                 message,
                 image_recognizer=recognizer,
                 candidate_store=candidate_store,
+                weread_lookup=lookup,
             )
         except (DoubanProviderError, FeishuOcrError, LocalOcrError) as exc:
             await channel.send(
@@ -443,6 +528,7 @@ async def _handle_message(
     *,
     image_recognizer: ImageTextRecognizer | None = None,
     candidate_store: CandidateSelectionStore | None = None,
+    weread_lookup: WeReadLookupLike | None = None,
 ) -> None:
     store = candidate_store or CandidateSelectionStore()
 
@@ -460,6 +546,7 @@ async def _handle_message(
             message,
             image_recognizer,
             candidate_store=store,
+            weread_lookup=weread_lookup,
         )
         return
 
@@ -485,12 +572,60 @@ async def _handle_message(
         )
         return
 
+    if await _maybe_handle_reselect(
+        channel,
+        message,
+        store,
+        weread_lookup=weread_lookup,
+    ):
+        return
+
     if await _maybe_handle_candidate_number(channel, message, store):
         return
 
     request = request_from_text(message.content_text)
     resolution = service.resolve(request)
-    await _send_resolution(channel, message, resolution, candidate_store=store)
+    await _send_resolution(
+        channel,
+        message,
+        resolution,
+        candidate_store=store,
+        weread_lookup=weread_lookup,
+    )
+
+
+async def _maybe_handle_reselect(
+    channel: ChannelLike,
+    message: InboundMessageLike,
+    store: CandidateSelectionStore,
+    *,
+    weread_lookup: WeReadLookupLike | None = None,
+) -> bool:
+    if not _is_reselect_edition_command(message.content_text):
+        return False
+
+    candidates = store.get(message.chat_id)
+    if not candidates:
+        await channel.send(
+            message.chat_id,
+            {"text": "当前没有可重新选择的豆瓣版本。请重新发送书名、ISBN 或豆瓣图书链接。"},
+            {"reply_to": message.message_id},
+        )
+        return True
+
+    statuses = await _lookup_candidate_statuses(candidates, weread_lookup)
+    await channel.send(
+        message.chat_id,
+        {
+            "text": _candidate_list_text(
+                candidates,
+                heading="可以，回到刚才的豆瓣版本：",
+                weread_statuses=statuses,
+            )
+        },
+        {"reply_to": message.message_id},
+    )
+    return True
 
 
 async def _maybe_handle_candidate_number(
@@ -513,10 +648,18 @@ async def _maybe_handle_candidate_number(
         return True
 
     edition = candidates[choice - 1]
-    store.clear(message.chat_id)
     request = request_from_text(edition.isbn or edition.title)
     confirmation = BookInboxConfirmation(request=request, candidate=edition)
     card = build_confirmation_card(confirmation)
+    elements = card.get("elements")
+    if isinstance(elements, list):
+        elements.insert(
+            1,
+            {
+                "tag": "markdown",
+                "content": "💡 如果后续发现微信读书对应的是另一个版本，可以发送 **重新选择豆瓣版本** 返回刚才的列表。",
+            },
+        )
     await channel.send(
         message.chat_id,
         {"card": card},
@@ -532,6 +675,7 @@ async def _handle_image_message(
     recognizer: ImageTextRecognizer,
     *,
     candidate_store: CandidateSelectionStore | None = None,
+    weread_lookup: WeReadLookupLike | None = None,
 ) -> None:
     store = candidate_store or CandidateSelectionStore()
     file_key = _image_resource_key(message.resources)
@@ -572,7 +716,13 @@ async def _handle_image_message(
         request = request_from_text(hint.title or "")
 
     resolution = service.resolve(request)
-    await _send_resolution(channel, message, resolution, candidate_store=store)
+    await _send_resolution(
+        channel,
+        message,
+        resolution,
+        candidate_store=store,
+        weread_lookup=weread_lookup,
+    )
 
 
 async def _send_resolution(
@@ -581,6 +731,7 @@ async def _send_resolution(
     resolution: BookInboxResolution,
     *,
     candidate_store: CandidateSelectionStore | None = None,
+    weread_lookup: WeReadLookupLike | None = None,
 ) -> None:
     store = candidate_store or CandidateSelectionStore()
     if resolution.kind is BookInboxResolutionKind.CONFIRM:
@@ -598,25 +749,16 @@ async def _send_resolution(
 
     if resolution.kind is BookInboxResolutionKind.MULTIPLE_CANDIDATES:
         store.set(message.chat_id, resolution.candidates)
-        lines = [resolution.message or "找到多个版本："]
-        for index, edition in enumerate(resolution.candidates, start=1):
-            details = " · ".join(
-                value
-                for value in (
-                    "、".join(edition.authors) if edition.authors else None,
-                    edition.publisher,
-                    edition.publish_date,
-                    edition.isbn,
-                )
-                if value
-            )
-            lines.append(f"{index}. {edition.title}" + (f"｜{details}" if details else ""))
-        lines.append(
-            f"回复 1–{len(resolution.candidates)} 选择具体版本；也可以发送 ISBN 或豆瓣图书链接。"
-        )
+        statuses = await _lookup_candidate_statuses(resolution.candidates, weread_lookup)
         await channel.send(
             message.chat_id,
-            {"text": "\n".join(lines)},
+            {
+                "text": _candidate_list_text(
+                    resolution.candidates,
+                    heading=resolution.message or "找到多个豆瓣版本：",
+                    weread_statuses=statuses,
+                )
+            },
             {"reply_to": message.message_id},
         )
         return
