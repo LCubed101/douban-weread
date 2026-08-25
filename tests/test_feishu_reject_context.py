@@ -5,7 +5,11 @@ import unittest
 
 from douban_weread.core.models import Edition
 from douban_weread.feishu_bot import CandidateSelectionStore
-from douban_weread.feishu_bot_context import _return_to_candidates
+from douban_weread.feishu_bot_context import (
+    _end_search,
+    _end_search_card,
+    _return_to_candidates,
+)
 
 
 class FakeChannel:
@@ -17,7 +21,7 @@ class FakeChannel:
 
 
 class RejectBookContextTest(unittest.TestCase):
-    def test_reject_book_returns_to_previous_candidates(self) -> None:
+    def test_reject_book_returns_to_previous_candidates_and_shows_end_button(self) -> None:
         channel = FakeChannel()
         store = CandidateSelectionStore()
         store.set(
@@ -43,12 +47,37 @@ class RejectBookContextTest(unittest.TestCase):
         )
 
         self.assertEqual(result["toast"]["content"], "已返回版本列表。")
-        self.assertEqual(len(channel.sent), 1)
+        self.assertEqual(len(channel.sent), 2)
         message = channel.sent[0][1]
         self.assertIn("不是这本，回到刚才的豆瓣版本", message["text"])
         self.assertIn("1. 褚时健传", message["text"])
         self.assertIn("2. 褚时健传（修订版）", message["text"])
+        control = channel.sent[1][1]["card"]
+        self.assertEqual(control["elements"][1]["actions"][0]["type"], "danger")
+        self.assertEqual(control["elements"][1]["actions"][0]["value"]["action"], "end_search")
         self.assertEqual(len(store.get("chat-1")), 2)
+
+    def test_end_search_clears_candidate_context(self) -> None:
+        store = CandidateSelectionStore()
+        store.set("chat-1", (Edition(title="听妈妈的话"),))
+        event = {
+            "chat_id": "chat-1",
+            "message_id": "message-1",
+            "action": {"value": {"action": "end_search"}},
+        }
+
+        result = asyncio.run(_end_search(store, event))
+
+        self.assertEqual(store.get("chat-1"), ())
+        self.assertEqual(result["toast"]["content"], "本次找书已结束。")
+        self.assertEqual(result["card"]["header"]["template"], "grey")
+        self.assertIn("发送新的书名", result["card"]["elements"][0]["content"])
+
+    def test_end_search_button_has_colored_contrast(self) -> None:
+        card = _end_search_card()
+        button = card["elements"][1]["actions"][0]
+        self.assertEqual(button["type"], "danger")
+        self.assertEqual(button["text"]["content"], "结束本次找书")
 
 
 if __name__ == "__main__":
