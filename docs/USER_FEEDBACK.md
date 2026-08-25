@@ -157,11 +157,70 @@ Implemented in the Feishu selection flow.
 
 ---
 
+### 9. Recommendations are not limited to books: documentary / creator / cross-platform subscription routing
+
+**Feedback**
+
+Users may be recommended things other than books, including documentaries and creators. A creator may exist on different platforms such as YouTube and Bilibili.
+
+The desired experience is to avoid manually copying a creator name, opening each platform, searching again, checking identity, and then subscribing.
+
+**Expected behavior**
+
+From one piece of recommendation context, the system could identify the recommended entity and present direct platform actions, for example:
+
+```text
+识别到：某个创作者
+
+[打开 YouTube 频道]
+[打开 Bilibili 主页]
+```
+
+For documentaries or videos, the same pattern could route to the relevant watch / save destination.
+
+**Implication**
+
+This is a strong signal that the long-term core may generalize from `Book Mention Extractor` toward:
+
+```text
+Mention Extractor
+      ↓
+Entity Resolver
+      ↓
+Router
+```
+
+Possible entity types include:
+
+- Book
+- Documentary / Video
+- Creator
+- Podcast
+- Article / Repo
+
+However, this should not expand the current V1.1 scope yet. Books remain the first vertical because the existing Douban / WeRead flow already gives a complete route for validating the “extract → resolve → route” pattern.
+
+Automatic subscription should not be assumed. Where platforms do not expose a suitable official write API / OAuth path, the first useful step is a direct, verified platform button rather than hidden automation.
+
+---
+
 ## Signals vs. current scope
 
 ### Repeated signals
 
 The feedback so far consistently points toward:
+
+```text
+content / screenshot / webpage / AI output
+                ↓
+        identify useful mentions
+                ↓
+        resolve the real entity
+                ↓
+        route to user's system
+```
+
+For the current book vertical:
 
 ```text
 content / screenshot / webpage / AI output
@@ -185,6 +244,7 @@ It should not yet become:
 - a complete second brain
 - a universal note-taking system
 - a movie / TV router
+- a universal creator subscription manager
 - a hardware product
 
 Those ideas stay in the feedback log until repeated real use justifies expansion.
