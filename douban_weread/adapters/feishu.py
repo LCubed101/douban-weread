@@ -145,6 +145,7 @@ def build_confirmation_card(confirmation: BookInboxConfirmation) -> dict[str, An
                 {
                     "tag": "button",
                     "text": {"tag": "plain_text", "content": "不是这本"},
+                    "type": "danger",
                     "value": reject_value,
                 },
             ],
@@ -199,6 +200,7 @@ def build_wish_confirmation_card(*, title: str, subject_id: str) -> dict[str, An
                     {
                         "tag": "button",
                         "text": {"tag": "plain_text", "content": "取消"},
+                        "type": "danger",
                         "value": {
                             "action": "cancel_wish",
                             "douban_subject_id": subject_id,
