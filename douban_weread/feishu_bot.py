@@ -98,6 +98,19 @@ class CandidateSelectionStore:
 
 ChannelFactory = Callable[[str, str], ChannelLike]
 
+_WEREAD_SHELF_COMMANDS = {
+    "加入书架",
+    "添加到书架",
+    "加入微信读书书架",
+    "微信读书加入书架",
+    "打开微信读书",
+}
+
+
+def _is_weread_shelf_command(text: str) -> bool:
+    normalized = "".join(text.split()).strip("。！!？?")
+    return normalized in _WEREAD_SHELF_COMMANDS
+
 
 def _default_channel_factory(app_id: str, app_secret: str) -> ChannelLike:
     try:
@@ -375,6 +388,20 @@ async def _handle_message(
         await channel.send(
             message.chat_id,
             {"text": "目前支持书名、ISBN、豆瓣图书链接和书籍图片。"},
+            {"reply_to": message.message_id},
+        )
+        return
+
+    if _is_weread_shelf_command(message.content_text):
+        await channel.send(
+            message.chat_id,
+            {
+                "text": (
+                    "微信读书官方接口目前还不能直接加入书架。\n"
+                    "请点击上一条结果里的“可读链接”打开对应的微信读书版本，再在微信读书里手动加入书架。\n"
+                    "这条指令不会再被当成书名搜索。"
+                )
+            },
             {"reply_to": message.message_id},
         )
         return
