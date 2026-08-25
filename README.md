@@ -1,6 +1,14 @@
 # Douban × WeRead
 
-让你在飞书里发来的书名、ISBN 或书籍图片，经过识别后匹配豆瓣版本，并继续检查微信读书中的可读版本。
+A self-hosted **Reading Inbox / Reading Router** prototype.
+
+> 把任何地方偶然遇到的书，低摩擦地送进你自己的阅读系统。
+>
+> Don't replace your system. Connect it.
+
+当前 V1 以飞书为主要 Capture 界面：你可以发送书名、ISBN 或书籍图片，系统识别并确认 Work / Edition，然后按你的阅读习惯路由到豆瓣和微信读书。Douban 是一种可选的阅读记录路径，不是产品边界；Feishu 也是一个输入适配器，不是产品本身。
+
+产品方向与边界见 [docs/PRODUCT_DIRECTION.md](docs/PRODUCT_DIRECTION.md)。下一阶段 V1.1 将聚焦 **Any text / image → Books → WeRead**：支持从一整段文字或图片里提取多本书，并保留 `Douban + WeRead` 作为可选路径。
 
 当前 V1 已支持：
 
@@ -10,6 +18,7 @@
 - 🤖 飞书机器人
 - ❤️ 豆瓣「想读」确认写入与回读验证
 - 📚 微信读书版本匹配与可用性检查
+- 🔀 Douban Edition / WeRead Edition 分离，同一 Work 可对应不同平台版本
 - 🔔 微信读书可用性定期检查
 - 🍎 macOS LaunchAgent 后台自动启动
 
@@ -24,7 +33,7 @@
 - Git
 - A Feishu app / bot if you want to use the chat interface
 - Your own Douban Cookie for authenticated Want-to-Read actions
-- Your own WeRead Agent API key for WeRead availability / shelf features
+- Your own WeRead Agent API key for WeRead availability features
 
 ## Quick start
 
@@ -159,7 +168,7 @@ See [docs/AUTH_SETUP.md](docs/AUTH_SETUP.md) for safe credential setup and [docs
 
 ## How matching works
 
-A book title is not a unique identity. The same work can have different translators, publishers, publication dates, covers and ISBNs.
+A book title is not a unique identity. The same Work can have different translators, publishers, publication dates, covers and ISBNs.
 
 Edition matching prefers:
 
@@ -167,9 +176,9 @@ Edition matching prefers:
 2. Same title + author + translator
 3. Same title + author + publisher
 4. Same title + author + publication year
-5. Same work, different edition available on WeRead
+5. Same Work, different Edition available on WeRead
 
-The project tries to preserve the edition you discovered while aligning the practical reading target to an edition that is actually readable on WeRead.
+The core identity is the Work. Douban Edition and WeRead Edition are platform-specific and may legitimately differ. The router should preserve the user's chosen record while routing to an actually readable WeRead edition when appropriate.
 
 ## WeRead states
 
@@ -177,6 +186,8 @@ The project tries to preserve the edition you discovered while aligning the prac
 - `AVAILABLE_ALTERNATIVE`
 - `COMING_SOON`
 - `NOT_FOUND`
+
+The current official WeRead interface used by this project supports read-side discovery and deep links. The project does **not** claim an official automatic shelf-add write flow where the upstream API does not expose one.
 
 ## Privacy and cost
 
@@ -211,6 +222,8 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md).
+
+Current next milestone: **V1.1 Multi-book Text Inbox** — long text / image → extract multiple books → match WeRead, with Douban remaining optional.
 
 ## Acknowledgements
 
