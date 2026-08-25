@@ -5,7 +5,8 @@ import contextlib
 import os
 import sys
 
-from douban_weread.feishu_bot import ChannelLike, build_bot
+from douban_weread.feishu_bot import ChannelLike
+from douban_weread.feishu_bot_context import build_bot
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
 from douban_weread.safe_logging import install_log_redaction
 from douban_weread.weread_watch_worker import WeReadWatchWorker
