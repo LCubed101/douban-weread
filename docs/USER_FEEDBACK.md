@@ -204,6 +204,88 @@ Automatic subscription should not be assumed. Where platforms do not expose a su
 
 ---
 
+### 10. Xiaohongshu feedback: social-media-to-Douban automation and film / TV support
+
+**Source**
+
+Feedback received publicly on Xiaohongshu after sharing the Douban–WeRead prototype.
+
+**Observed comments**
+
+- “需要 社媒到豆瓣的自动化” — a user explicitly wants automation from social-media discovery into Douban.
+- “主要我需要小红书截图到豆瓣想读” — the user clarifies that screenshot-based capture from Xiaohongshu is the concrete pain point.
+- “影视剧能用嘛” — another user asks whether the same workflow can support film / TV.
+
+**Signal**
+
+The repeated pattern is not only “books to WeRead.” It is broader:
+
+```text
+social-media discovery
+        ↓
+identify recommended object
+        ↓
+route it into the user's existing tracking / consumption platform
+```
+
+For books, the existing route is Douban + WeRead. For film / TV, Douban is a natural record destination. This suggests the current book flow may be the first domain-specific implementation of a broader recommendation router.
+
+**Scope note**
+
+Do not expand the current V1.1 immediately. Preserve this as evidence for a future media vertical after the book extraction / routing pattern is stable.
+
+---
+
+### 11. Personal workflow need: films / TV → Douban; Bilibili documentaries and YouTube videos → canonical long links
+
+**Need**
+
+The current personal workflow includes recommendations for:
+
+- films
+- TV series
+- documentaries
+- YouTube creators / videos
+- Bilibili creators / videos
+
+The desired destination differs by object type:
+
+```text
+Film / TV
+  → Douban “想看” / watch-list record
+
+Bilibili documentary / video
+  → resolve the exact item and return a stable, canonical long URL
+
+YouTube video / creator
+  → resolve the exact video / channel and return a stable, canonical long URL
+```
+
+The goal is not necessarily to auto-follow or auto-subscribe in the first version. A high-confidence, direct long link already removes the repeated search / identity-check step and lets the user decide the final action on the destination platform.
+
+**Product implication**
+
+This strengthens the idea of separating three layers:
+
+```text
+Mention Extraction
+      ↓
+Entity Resolution
+      ↓
+Destination Routing
+```
+
+Different entity types can share the same pipeline while using different output adapters:
+
+- Book → Douban / WeRead
+- Film / TV → Douban
+- Bilibili Video / Creator → canonical Bilibili URL
+- YouTube Video / Creator → canonical YouTube URL
+
+This is a useful future validation target because it tests whether the Router abstraction survives beyond books without requiring a generic Knowledge Inbox.
+
+---
+
 ## Signals vs. current scope
 
 ### Repeated signals
