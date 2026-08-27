@@ -4,8 +4,10 @@ import asyncio
 import unittest
 from dataclasses import dataclass
 
+from douban_weread.core.models import Edition
 from douban_weread.feishu_bot import CandidateSelectionStore
 from douban_weread.feishu_bot_v11 import _try_handle_multi_book_message
+from douban_weread.inbox_weread import WeReadLookupKind
 
 
 @dataclass
@@ -43,8 +45,11 @@ class FakeRecognizer:
 
 
 class FakeResult:
-    def __init__(self, title: str) -> None:
-        self.message = f"微信读书：找到《{title}》。\n可读链接：https://weread.qq.com/{title}"
+    def __init__(self, title: str, *, kind=WeReadLookupKind.EXACT) -> None:
+        self.kind = kind
+        self.message = f"微信读书：找到《{title}》。"
+        self.deep_link = f"https://weread.qq.com/{title}" if kind is WeReadLookupKind.EXACT else None
+        self.selected_edition = Edition(title=title) if kind is not WeReadLookupKind.NOT_FOUND else None
 
 
 class FakeLookup:
@@ -53,7 +58,7 @@ class FakeLookup:
 
 
 class FeishuMultiBookV11Test(unittest.TestCase):
-    def test_long_text_routes_multiple_explicit_books_to_weread(self) -> None:
+    def test_long_text_returns_one_summary_card(self) -> None:
         channel = FakeChannel()
         message = FakeMessage(
             content_text="推荐《价值主张设计》《商业模式新生代》《价值主张设计》。",
@@ -69,12 +74,16 @@ class FeishuMultiBookV11Test(unittest.TestCase):
             )
         )
         self.assertTrue(handled)
-        self.assertIn("识别到 2 本书", channel.sent[0][1]["text"])
-        self.assertEqual(len(channel.sent), 3)
-        self.assertIn("价值主张设计", channel.sent[1][1]["text"])
-        self.assertIn("商业模式新生代", channel.sent[2][1]["text"])
+        self.assertEqual(len(channel.sent), 1)
+        card = channel.sent[0][1]["card"]
+        self.assertEqual(card["header"]["title"]["content"], "书单处理结果")
+        rendered = str(card)
+        self.assertIn("识别到 **2** 本书", rendered)
+        self.assertIn("价值主张设计", rendered)
+        self.assertIn("商业模式新生代", rendered)
+        self.assertIn("打开《价值主张设计》", rendered)
 
-    def test_flomo_screenshot_uses_ocr_then_routes_books(self) -> None:
+    def test_flomo_screenshot_uses_ocr_then_returns_one_summary(self) -> None:
         channel = FakeChannel()
         message = FakeMessage(
             raw_content_type="image",
@@ -90,8 +99,11 @@ class FeishuMultiBookV11Test(unittest.TestCase):
             )
         )
         self.assertTrue(handled)
-        self.assertIn("识别到 4 本书", channel.sent[0][1]["text"])
-        self.assertEqual(len(channel.sent), 5)
+        self.assertEqual(len(channel.sent), 1)
+        rendered = str(channel.sent[0][1]["card"])
+        self.assertIn("识别到 **4** 本书", rendered)
+        self.assertIn("巨人的工具", rendered)
+        self.assertIn("思考，快与慢", rendered)
 
     def test_single_plain_title_keeps_existing_flow(self) -> None:
         channel = FakeChannel()
