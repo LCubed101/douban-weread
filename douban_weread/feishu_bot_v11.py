@@ -47,6 +47,13 @@ async def _mentions_from_message(
     return ()
 
 
+def _lookup_one_mention(weread_lookup: base.WeReadLookupLike, mention: BookMention):
+    title_lookup = getattr(weread_lookup, "lookup_title", None)
+    if callable(title_lookup):
+        return title_lookup(mention.title)
+    return weread_lookup.lookup(Edition(title=mention.title))
+
+
 async def _lookup_mentions(
     mentions: tuple[BookMention, ...],
     weread_lookup: base.WeReadLookupLike,
@@ -57,8 +64,9 @@ async def _lookup_mentions(
         try:
             async with semaphore:
                 result = await asyncio.to_thread(
-                    weread_lookup.lookup,
-                    Edition(title=mention.title),
+                    _lookup_one_mention,
+                    weread_lookup,
+                    mention,
                 )
         except WEREAD_LOOKUP_ERRORS as exc:
             return mention, None, str(exc)
