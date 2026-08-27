@@ -16,6 +16,7 @@ class WeReadWatchStoreLike(Protocol):
         source: Edition,
         weread: Edition | None,
         deep_link: str | None,
+        watch_kind: str | None = None,
     ): ...
 
 
@@ -30,34 +31,27 @@ def record_unavailable_watch(
     result: WeReadLookupResult,
     store: WeReadWatchStoreLike,
 ) -> str | None:
-    """Persist unavailable or not-yet-exposed WeRead availability watches.
-
-    ``UNAVAILABLE`` means an official same-Work WeRead Edition was found but is
-    currently unreadable. ``NOT_FOUND`` is stored as a weaker watch: no WeRead
-    bookId is asserted, and later checks must rediscover the Work by the normal
-    bounded title + ISBN lookup. Readable results are never queued.
-
-    Returns a user-facing suffix. Persistence failure must never change an
-    already-verified Douban write result into a failed write.
-    """
+    """Persist unavailable/not-found WeRead items with a durable recheck cadence."""
     if result.kind not in {WeReadLookupKind.UNAVAILABLE, WeReadLookupKind.NOT_FOUND}:
         return None
 
-    weread = result.selected_edition if result.kind is WeReadLookupKind.UNAVAILABLE else None
-    deep_link = result.deep_link if result.kind is WeReadLookupKind.UNAVAILABLE else None
+    waiting = result.kind is WeReadLookupKind.UNAVAILABLE
+    weread = result.selected_edition if waiting else None
+    deep_link = result.deep_link if waiting else None
+    watch_kind = "waiting" if waiting else "not_found"
     try:
-        store.add_or_refresh(
+        entry = store.add_or_refresh(
             chat_id=chat_id,
             source=source,
             weread=weread,
             deep_link=deep_link,
+            watch_kind=watch_kind,
         )
     except (ValueError, OSError, sqlite3.Error):
-        return "等待上架记录暂时保存失败；豆瓣状态已经确认，不需要重复操作。"
+        return "等待上架记录暂时保存失败；当前查询结果不受影响。"
 
-    if result.kind is WeReadLookupKind.NOT_FOUND:
-        return (
-            "已加入「等待上架」列表（弱匹配）。当前官方微信读书接口还没有暴露可确认的同 Work 版本；"
-            "后续会继续按标题 + ISBN 重新检查。"
-        )
-    return "已加入「等待上架」列表。后续可用 `douban-weread weread watch check` 重新检查。"
+    due = getattr(entry, "next_check_at", None)
+    due_text = f"下次计划检查：{str(due)[:10]}。" if due else ""
+    if waiting:
+        return f"已加入「等待上架」列表；预计 30 天后重新检查。{due_text}"
+    return f"已加入「等待上架」列表（当前未找到）；预计 90 天后重新搜索。{due_text}"
