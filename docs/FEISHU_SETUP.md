@@ -4,6 +4,8 @@
 
 > 每个人都应该使用自己的 Feishu App ID / Secret。不要共享作者的 `.env`，也不要把真实 Secret、Cookie、Token 提交到 GitHub。
 
+如果你只想测试 **flomo / 书单截图 → 微信读书**，不使用豆瓣，请直接看 [朋友试用：WeRead-only 私有部署](FRIEND_TEST_WEREAD_ONLY.md)。
+
 ## 1. 创建飞书应用
 
 1. 打开飞书开放平台，进入开发者后台。
@@ -33,7 +35,7 @@ FEISHU_APP_SECRET=你的 App Secret
 
 ## 3. 配置消息与资源权限
 
-V1 需要完成这些能力：
+V1 / V1.1 需要完成这些能力：
 
 - 接收用户发给机器人的消息；
 - 向会话发送文本和交互卡片；
@@ -63,13 +65,14 @@ V1 需要完成这些能力：
 processor not found, type: im.chat.access_event.bot_p2p_chat_entered_v1
 ```
 
-这是飞书发送了「进入机器人私聊」一类事件，但当前项目没有为它注册处理器。只要正常的书名 / ISBN / 图片消息能够回复，这条日志可以暂时忽略。
+这是飞书发送了「进入机器人私聊」一类事件，但当前项目没有为它注册处理器。只要正常消息能够回复，这条日志可以暂时忽略。
 
 ## 5. 安装项目
 
 ```bash
 git clone https://github.com/LCubed101/douban-weread.git
 cd douban-weread
+git checkout agent/weread-shelf-baseline
 
 python3 -m venv .venv
 source .venv/bin/activate
@@ -92,12 +95,21 @@ FEISHU_APP_ID=
 FEISHU_APP_SECRET=
 ```
 
-如果你还要使用豆瓣「想读」和微信读书功能，再填写：
+微信读书功能使用腾讯官方 Agent API Key：
+
+```env
+WEREAD_API_KEY=
+```
+
+如果你还要使用豆瓣「想读」写入，再填写：
 
 ```env
 DOUBAN_COOKIE=
-WEREAD_COOKIE=
 ```
+
+**不使用豆瓣时，`DOUBAN_COOKIE` 保持空白即可。**
+
+注意：项目当前使用的是 `WEREAD_API_KEY`，不是旧文档中的 `WEREAD_COOKIE`。
 
 这些值只应该保存在你自己的机器上。
 
@@ -116,7 +128,7 @@ douban-weread-feishu
 正常启动时会看到类似：
 
 ```text
-Douban × WeRead Feishu Book Inbox starting via WebSocket...
+Douban × WeRead Feishu Reading Inbox starting via WebSocket...
 FeishuChannel: bot identity resolved ...
 connected to wss://msg-frontier.feishu.cn/...
 ```
@@ -129,20 +141,35 @@ connected to wss://msg-frontier.feishu.cn/...
 Control + C
 ```
 
-## 8. 做 3 个 smoke tests
+## 8. 做 smoke tests
 
-建议按这个顺序测试：
+### WeRead-only 朋友试用
 
-1. 发一个书名，例如 `白夜行`；
-2. 发一个 ISBN；
-3. 发一张书籍封面图片。
+如果这轮不使用豆瓣，推荐只测：
+
+1. 一张包含多个明确 `《书名》` 的 flomo / 书单截图；
+2. 一段包含多个 `《书名》` 的文本；
+3. 点击结果卡中的「打开《书名》」；
+4. 有未找到书时，点击「查看等待列表」。
 
 预期：
 
-- 书名可以返回豆瓣候选；
-- ISBN 可以做更精确的版本匹配；
-- 图片会在本机运行 OCR；
-- 如果复杂封面无法可靠判断，机器人会要求你补书名、ISBN、豆瓣链接、版权页或条码页，而不是强行猜一本无关的书。
+- 图片在本机运行 OCR；
+- 多本书被提取后返回一张汇总卡；
+- 可读书返回微信读书按钮；
+- 未找到的书进入 Waiting List，之后按计划重新搜索。
+
+当前单独发送一个普通书名仍属于旧的 Douban-first 单书流程，因此 **WeRead-only friends beta 暂时不要把单书普通文本作为测试入口**。
+
+### 完整 Douban + WeRead 流程
+
+如果已经配置豆瓣 Cookie，可以继续测试：
+
+1. 发一个书名，例如 `白夜行`；
+2. 发一个 ISBN；
+3. 发一张单本书籍封面图片。
+
+预期可以进入豆瓣版本确认 / 想读及微信读书匹配流程。
 
 ## 9. macOS 后台自动启动
 
@@ -260,15 +287,23 @@ connected to wss://msg-frontier.feishu.cn/...
 python3 -c "import rapidocr_onnxruntime; print('RapidOCR OK')"
 ```
 
-复杂封面识别失败并不一定代表程序异常。V1 会尽量 fail closed：无法可靠判断时要求用户补充更明确的信息。
+### 微信读书搜索提示缺少凭证
+
+确认 `.env` 中是：
+
+```env
+WEREAD_API_KEY='...'
+```
+
+不是 `WEREAD_COOKIE`。
 
 ## 11. 安全说明
 
 不要把下面内容提交到 GitHub、Issue、截图或聊天记录：
 
 - `FEISHU_APP_SECRET`
-- `DOUBAN_COOKIE`
-- `WEREAD_COOKIE`
+- `DOUBAN_COOKIE`（如果使用）
+- `WEREAD_API_KEY`
 - 其他登录态、Token、Cookie
 
 项目的 `.env.example` 只提供字段模板；真实值请保存在本地 `.env`。
