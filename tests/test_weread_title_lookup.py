@@ -13,8 +13,11 @@ from douban_weread.inbox_weread import WeReadEditionLookup, WeReadLookupKind
 @dataclass
 class Candidate:
     book_id: str
+    title: str
     soldout: int = 0
     deep_link: str | None = None
+    author: str | None = None
+    publisher: str | None = None
 
 
 class FakeProvider:
@@ -34,7 +37,7 @@ class FakeProvider:
 class WeReadTitleLookupTest(unittest.TestCase):
     def test_exact_normalized_title_returns_readable_result(self) -> None:
         provider = FakeProvider(
-            [Candidate("1", deep_link="https://weread.qq.com/web/bookDetail/1")],
+            [Candidate("1", "深度工作", deep_link="https://weread.qq.com/web/bookDetail/1")],
             {"1": Edition(title="深度工作", authors=["卡尔·纽波特"])},
         )
         lookup = WeReadEditionLookup(provider=provider)
@@ -48,7 +51,7 @@ class WeReadTitleLookupTest(unittest.TestCase):
 
     def test_fuzzy_title_does_not_get_auto_selected(self) -> None:
         provider = FakeProvider(
-            [Candidate("1", deep_link="https://weread.qq.com/web/bookDetail/1")],
+            [Candidate("1", "深度工作：如何有效使用每一点脑力", deep_link="https://weread.qq.com/web/bookDetail/1")],
             {"1": Edition(title="深度工作：如何有效使用每一点脑力")},
         )
         lookup = WeReadEditionLookup(provider=provider)
@@ -60,7 +63,7 @@ class WeReadTitleLookupTest(unittest.TestCase):
 
     def test_exact_title_soldout_is_unavailable(self) -> None:
         provider = FakeProvider(
-            [Candidate("1", soldout=1, deep_link="https://weread.qq.com/web/bookDetail/1")],
+            [Candidate("1", "专注", soldout=1, deep_link="https://weread.qq.com/web/bookDetail/1")],
             {"1": Edition(title="专注")},
         )
         lookup = WeReadEditionLookup(provider=provider)
@@ -68,6 +71,43 @@ class WeReadTitleLookupTest(unittest.TestCase):
         result = lookup.lookup_title("专注")
 
         self.assertEqual(result.kind, WeReadLookupKind.UNAVAILABLE)
+
+    def test_search_only_soldout_candidate_is_still_waiting(self) -> None:
+        provider = FakeProvider(
+            [
+                Candidate(
+                    "87332a20811e1ad78g018d1e",
+                    "如何改变世界",
+                    soldout=1,
+                    deep_link="https://weread.qq.com/book-detail?v=87332a20811e1ad78g018d1e",
+                    author="埃里克·霍布斯鲍姆",
+                )
+            ],
+            {},
+        )
+        lookup = WeReadEditionLookup(provider=provider)
+
+        result = lookup.lookup_title("如何改变世界")
+
+        self.assertEqual(result.kind, WeReadLookupKind.UNAVAILABLE)
+        self.assertEqual(result.selected_edition.title, "如何改变世界")
+        self.assertEqual(result.selected_edition.weread_id, "87332a20811e1ad78g018d1e")
+        self.assertEqual(
+            result.deep_link,
+            "https://weread.qq.com/book-detail?v=87332a20811e1ad78g018d1e",
+        )
+        self.assertIn("待上架/不可读", result.message)
+
+    def test_available_candidate_without_book_info_is_not_marked_readable(self) -> None:
+        provider = FakeProvider(
+            [Candidate("1", "深度工作", soldout=0, deep_link="https://weread.qq.com/web/bookDetail/1")],
+            {},
+        )
+        lookup = WeReadEditionLookup(provider=provider)
+
+        result = lookup.lookup_title("深度工作")
+
+        self.assertEqual(result.kind, WeReadLookupKind.NOT_FOUND)
 
     def test_multi_book_lookup_uses_title_only_method(self) -> None:
         class Lookup:
