@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from douban_weread.inbox_weread import WeReadEditionLookup, WeReadLookupKind
-from douban_weread.providers.weread import WeReadClient
 from douban_weread.storage.weread_watch import WeReadAvailabilityWatchStore
 
 
@@ -34,18 +33,24 @@ class WeReadWatchWorker:
         self.shelf_provider = shelf_provider or getattr(self.lookup, "provider", None)
 
     def run_once(self) -> list[WeReadWatchNotification]:
-        for entry in self.store.pending():
-            result = self.lookup.lookup(entry.source_edition())
-            if result.kind not in {WeReadLookupKind.EXACT, WeReadLookupKind.ALTERNATIVE}:
-                continue
-            selected = result.selected_edition
-            if selected is None or not selected.weread_id:
-                continue
-            self.store.mark_available(
-                entry.id,
-                weread=selected,
-                deep_link=result.deep_link,
-            )
+        due_entries = (
+            self.store.due_pending()
+            if hasattr(self.store, "due_pending")
+            else self.store.pending()
+        )
+        for entry in due_entries:
+            result = self._lookup_entry(entry)
+            if result.kind in {WeReadLookupKind.EXACT, WeReadLookupKind.ALTERNATIVE}:
+                selected = result.selected_edition
+                if selected is not None and selected.weread_id:
+                    self.store.mark_available(
+                        entry.id,
+                        weread=selected,
+                        deep_link=result.deep_link,
+                    )
+                    continue
+            if hasattr(self.store, "mark_checked_pending"):
+                self.store.mark_checked_pending(entry.id)
 
         available_entries = self.store.unnotified_available()
         if not available_entries:
@@ -72,6 +77,20 @@ class WeReadWatchWorker:
             )
         return notifications
 
+    def _lookup_entry(self, entry):
+        source = entry.source_edition()
+        title_only = (
+            not source.authors
+            and not source.publisher
+            and not source.publish_date
+            and not source.douban_id
+            and not source.isbn
+        )
+        lookup_title = getattr(self.lookup, "lookup_title", None)
+        if title_only and callable(lookup_title):
+            return lookup_title(source.title)
+        return self.lookup.lookup(source)
+
     def acknowledge(self, notification: WeReadWatchNotification) -> None:
         self.store.mark_notified(notification.entry_id)
 
@@ -88,5 +107,5 @@ def _notification_text(entry, *, on_shelf: bool | None) -> str:
     else:
         lines.append("暂时无法确认它是否已经在你的微信读书书架中。")
     if entry.deep_link:
-        lines.append(f"打开微信读书：{entry.deep_link}")
+        lines.append(f"可读链接：{entry.deep_link}")
     return "\n".join(lines)

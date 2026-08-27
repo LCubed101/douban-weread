@@ -16,10 +16,16 @@ from douban_weread.feishu_bot_context import (
     _send_end_search_control,
 )
 from douban_weread.inbox import BookInboxService
-from douban_weread.inbox_weread import WEREAD_LOOKUP_ERRORS, WeReadEditionLookup
-from douban_weread.inbox_weread_watch import WeReadWatchStoreLike, default_watch_store
+from douban_weread.inbox_weread import WEREAD_LOOKUP_ERRORS, WeReadEditionLookup, WeReadLookupKind
+from douban_weread.inbox_weread_watch import (
+    WeReadWatchStoreLike,
+    default_watch_store,
+    record_unavailable_watch,
+)
 from douban_weread.inbox_wish import DoubanWishFlow, WISH_FLOW_ERRORS
 from douban_weread.providers.douban import DoubanBookSearchClient, DoubanProviderError
+
+_WAITING_LIST_COMMANDS = {"查看待上架", "等待上架", "查看等待上架", "waiting list"}
 
 
 async def _mentions_from_message(
@@ -75,19 +81,51 @@ async def _lookup_mentions(
     return tuple(await asyncio.gather(*(one(mention) for mention in mentions)))
 
 
+def _normalize_command(text: str) -> str:
+    return " ".join(text.split()).strip("。！!？?").casefold()
+
+
+async def _try_handle_waiting_list_command(
+    channel: base.ChannelLike,
+    message: base.InboundMessageLike,
+    store: object,
+) -> bool:
+    if message.raw_content_type not in {"text", "post", ""}:
+        return False
+    if _normalize_command(message.content_text) not in _WAITING_LIST_COMMANDS:
+        return False
+
+    pending_fn = getattr(store, "pending", None)
+    entries = pending_fn() if callable(pending_fn) else []
+    entries = [entry for entry in entries if getattr(entry, "chat_id", None) == message.chat_id]
+    if not entries:
+        text = "当前没有等待微信读书上架/重新搜索的书。"
+    else:
+        lines = [f"当前等待列表共 {len(entries)} 本："]
+        for index, entry in enumerate(entries, start=1):
+            kind = getattr(entry, "watch_kind", "not_found")
+            label = "⏳ 待上架" if kind == "waiting" else "🔍 暂未找到"
+            due = str(getattr(entry, "next_check_at", "") or "")[:10]
+            suffix = f" · 下次检查 {due}" if due else ""
+            lines.append(f"{index}. 《{entry.source_title}》 · {label}{suffix}")
+        text = "\n".join(lines)
+    await channel.send(
+        message.chat_id,
+        {"text": text},
+        {"reply_to": message.message_id},
+    )
+    return True
+
+
 async def _try_handle_multi_book_message(
     channel: base.ChannelLike,
     message: base.InboundMessageLike,
     recognizer: ImageTextRecognizer,
     weread_lookup: base.WeReadLookupLike | None,
     candidate_store: base.CandidateSelectionStore,
+    weread_watch_store: WeReadWatchStoreLike | None = None,
 ) -> bool:
-    """Handle explicit multi-book content as a WeRead-first V1.1 route.
-
-    Existing single-book behavior is intentionally left untouched. The first
-    real-world slice activates only when two or more explicit 《...》 mentions
-    survive deterministic extraction.
-    """
+    """Handle explicit multi-book content as a WeRead-first V1.1 route."""
 
     if weread_lookup is None:
         return False
@@ -121,9 +159,26 @@ async def _try_handle_multi_book_message(
         result_message = str(getattr(result, "message", "") or "").strip()
         if not result_message:
             result_message = "微信读书暂未返回可用结果。"
+
+        watch_message = None
+        kind = getattr(result, "kind", None)
+        if (
+            weread_watch_store is not None
+            and kind in {WeReadLookupKind.UNAVAILABLE, WeReadLookupKind.NOT_FOUND}
+        ):
+            watch_message = record_unavailable_watch(
+                chat_id=message.chat_id,
+                source=Edition(title=mention.title),
+                result=result,
+                store=weread_watch_store,
+            )
+
+        text = f"《{mention.title}》\n{result_message}"
+        if watch_message:
+            text = f"{text}\n{watch_message}"
         await channel.send(
             message.chat_id,
-            {"text": f"《{mention.title}》\n{result_message}"},
+            {"text": text},
             {"reply_to": message.message_id},
         )
     return True
@@ -150,12 +205,15 @@ def build_bot(
 
     async def on_message(message: base.InboundMessageLike) -> None:
         try:
+            if await _try_handle_waiting_list_command(channel, message, watch_store):
+                return
             if await _try_handle_multi_book_message(
                 channel,
                 message,
                 recognizer,
                 lookup,
                 candidate_store,
+                watch_store,
             ):
                 return
 
