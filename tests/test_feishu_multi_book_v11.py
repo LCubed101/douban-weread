@@ -57,6 +57,32 @@ class FakeLookup:
         return FakeResult(edition.title)
 
 
+class MixedLookup:
+    def lookup(self, edition):
+        if edition.title == "价值主张设计":
+            return FakeResult(edition.title, kind=WeReadLookupKind.NOT_FOUND)
+        return FakeResult(edition.title)
+
+
+class FakeWatchEntry:
+    def __init__(self, title: str) -> None:
+        self.chat_id = "chat-1"
+        self.source_title = title
+        self.watch_kind = "not_found"
+        self.next_check_at = "2026-11-25T00:00:00+00:00"
+
+
+class FakeWatchStore:
+    def __init__(self) -> None:
+        self.entries = [FakeWatchEntry("价值主张设计")]
+
+    def pending(self):
+        return list(self.entries)
+
+    def add_or_refresh(self, **kwargs):
+        return self.entries[0]
+
+
 class FeishuMultiBookV11Test(unittest.TestCase):
     def test_long_text_returns_one_summary_card(self) -> None:
         channel = FakeChannel()
@@ -78,10 +104,11 @@ class FeishuMultiBookV11Test(unittest.TestCase):
         card = channel.sent[0][1]["card"]
         self.assertEqual(card["header"]["title"]["content"], "书单处理结果")
         rendered = str(card)
-        self.assertIn("识别到 **2** 本书", rendered)
+        self.assertIn("2 本", rendered)
         self.assertIn("价值主张设计", rendered)
         self.assertIn("商业模式新生代", rendered)
         self.assertIn("打开《价值主张设计》", rendered)
+        self.assertNotIn("###", rendered)
 
     def test_flomo_screenshot_uses_ocr_then_returns_one_summary(self) -> None:
         channel = FakeChannel()
@@ -101,9 +128,34 @@ class FeishuMultiBookV11Test(unittest.TestCase):
         self.assertTrue(handled)
         self.assertEqual(len(channel.sent), 1)
         rendered = str(channel.sent[0][1]["card"])
-        self.assertIn("识别到 **4** 本书", rendered)
+        self.assertIn("4 本", rendered)
         self.assertIn("巨人的工具", rendered)
         self.assertIn("思考，快与慢", rendered)
+
+    def test_waiting_results_get_button_and_short_copy(self) -> None:
+        channel = FakeChannel()
+        message = FakeMessage(
+            content_text="推荐《价值主张设计》《商业模式新生代》。",
+            raw_content_type="text",
+        )
+        handled = asyncio.run(
+            _try_handle_multi_book_message(
+                channel,
+                message,
+                FakeRecognizer(),
+                MixedLookup(),
+                CandidateSelectionStore(),
+                FakeWatchStore(),
+            )
+        )
+        self.assertTrue(handled)
+        rendered = str(channel.sent[0][1]["card"])
+        self.assertIn("已帮你记住 1 本", rendered)
+        self.assertIn("2026-11-25 重搜", rendered)
+        self.assertIn("查看等待列表", rendered)
+        self.assertIn("show_waiting_list", rendered)
+        self.assertNotIn("发送 **查看待上架**", rendered)
+        self.assertNotIn("###", rendered)
 
     def test_single_plain_title_keeps_existing_flow(self) -> None:
         channel = FakeChannel()
