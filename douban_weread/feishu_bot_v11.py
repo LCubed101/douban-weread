@@ -103,6 +103,23 @@ def _watch_due_for_title(store: object, *, chat_id: str, title: str) -> str | No
     return None
 
 
+def _waiting_list_text(store: object, *, chat_id: str) -> str:
+    pending_fn = getattr(store, "pending", None)
+    entries = pending_fn() if callable(pending_fn) else []
+    entries = [entry for entry in entries if getattr(entry, "chat_id", None) == chat_id]
+    if not entries:
+        return "当前没有等待微信读书上架或重新搜索的书。"
+
+    lines = [f"等待列表 · {len(entries)} 本"]
+    for index, entry in enumerate(entries, start=1):
+        kind = getattr(entry, "watch_kind", "not_found")
+        label = "⏳ 待上架" if kind == "waiting" else "🔍 暂未找到"
+        due = str(getattr(entry, "next_check_at", "") or "")[:10]
+        suffix = f" · {due}" if due else ""
+        lines.append(f"{index}. 《{entry.source_title}》 · {label}{suffix}")
+    return "\n".join(lines)
+
+
 def _selected_details(result: object) -> str | None:
     edition = getattr(result, "selected_edition", None)
     if edition is None:
@@ -147,17 +164,16 @@ def _batch_summary_card(
         {
             "tag": "markdown",
             "content": (
-                f"📚 识别到 **{len(mentions)}** 本书\n"
-                f"✅ 可读 {len(available)} · ⏳ 待上架 {len(waiting)} · "
-                f"🔍 暂未找到 {len(not_found)}"
-                + (f" · ⚠️ 查询失败 {len(failed)}" if failed else "")
+                f"📚 **{len(mentions)} 本** · ✅ 可读 {len(available)} · "
+                f"⏳ 待上架 {len(waiting)} · 🔍 未找到 {len(not_found)}"
+                + (f" · ⚠️ 失败 {len(failed)}" if failed else "")
             ),
         }
     ]
 
     if available:
         elements.append({"tag": "hr"})
-        elements.append({"tag": "markdown", "content": "### ✅ 微信读书可读"})
+        elements.append({"tag": "markdown", "content": "**✅ 微信读书可读**"})
         for mention, result in available:
             details = _selected_details(result)
             content = f"**《{mention.title}》**"
@@ -182,31 +198,45 @@ def _batch_summary_card(
 
     if waiting:
         elements.append({"tag": "hr"})
-        lines = ["### ⏳ 待上架"]
+        lines = ["**⏳ 待上架**"]
         for mention, result in waiting:
             due = _watch_due_for_title(watch_store, chat_id=chat_id, title=mention.title) if watch_store else None
-            suffix = f" · 下次检查 {due}" if due else ""
-            lines.append(f"- 《{mention.title}》{suffix}")
+            suffix = f" · {due} 再查" if due else ""
+            lines.append(f"《{mention.title}》{suffix}")
             deep_link = str(getattr(result, "deep_link", "") or "").strip()
             if deep_link:
-                lines.append(f"  [查看微信读书]({deep_link})")
+                lines.append(f"[查看微信读书]({deep_link})")
         elements.append({"tag": "markdown", "content": "\n".join(lines)})
 
     if not_found:
         elements.append({"tag": "hr"})
-        lines = ["### 🔍 已帮你记住"]
+        lines = [f"**🔍 已帮你记住 {len(not_found)} 本**"]
         for mention, _result in not_found:
             due = _watch_due_for_title(watch_store, chat_id=chat_id, title=mention.title) if watch_store else None
-            suffix = f" · 下次重搜 {due}" if due else ""
-            lines.append(f"- 《{mention.title}》{suffix}")
-        lines.append("\n发送 **查看待上架** 可以随时查看完整列表。")
+            suffix = f" · {due} 重搜" if due else ""
+            lines.append(f"《{mention.title}》{suffix}")
         elements.append({"tag": "markdown", "content": "\n".join(lines)})
+
+    if waiting or not_found:
+        elements.append(
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "查看等待列表"},
+                        "type": "default",
+                        "value": {"action": "show_waiting_list"},
+                    }
+                ],
+            }
+        )
 
     if failed:
         elements.append({"tag": "hr"})
-        lines = ["### ⚠️ 本次查询失败"]
-        lines.extend(f"- 《{mention.title}》" for mention, _error in failed)
-        lines.append("稍后重新发送这张图即可重试。")
+        lines = ["**⚠️ 本次查询失败**"]
+        lines.extend(f"《{mention.title}》" for mention, _error in failed)
+        lines.append("稍后重新发送即可重试。")
         elements.append({"tag": "markdown", "content": "\n".join(lines)})
 
     template = "green" if available else "blue"
@@ -230,23 +260,9 @@ async def _try_handle_waiting_list_command(
     if _normalize_command(message.content_text) not in _WAITING_LIST_COMMANDS:
         return False
 
-    pending_fn = getattr(store, "pending", None)
-    entries = pending_fn() if callable(pending_fn) else []
-    entries = [entry for entry in entries if getattr(entry, "chat_id", None) == message.chat_id]
-    if not entries:
-        text = "当前没有等待微信读书上架/重新搜索的书。"
-    else:
-        lines = [f"当前等待列表共 {len(entries)} 本："]
-        for index, entry in enumerate(entries, start=1):
-            kind = getattr(entry, "watch_kind", "not_found")
-            label = "⏳ 待上架" if kind == "waiting" else "🔍 暂未找到"
-            due = str(getattr(entry, "next_check_at", "") or "")[:10]
-            suffix = f" · 下次检查 {due}" if due else ""
-            lines.append(f"{index}. 《{entry.source_title}》 · {label}{suffix}")
-        text = "\n".join(lines)
     await channel.send(
         message.chat_id,
-        {"text": text},
+        {"text": _waiting_list_text(store, chat_id=message.chat_id)},
         {"reply_to": message.message_id},
     )
     return True
@@ -372,6 +388,12 @@ def build_bot(
 
         if action == "end_search":
             return await _end_search(candidate_store, event)
+
+        if action == "show_waiting_list":
+            if chat_id:
+                await channel.send(chat_id, {"text": _waiting_list_text(watch_store, chat_id=chat_id)})
+                return {"toast": {"type": "success", "content": "已打开等待列表。"}}
+            return {"toast": {"type": "error", "content": "缺少会话信息，无法查看等待列表。"}}
 
         if action == "reject_book":
             return await _return_to_candidates(
