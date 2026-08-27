@@ -85,6 +85,141 @@ def _normalize_command(text: str) -> str:
     return " ".join(text.split()).strip("。！!？?").casefold()
 
 
+def _watch_due_for_title(store: object, *, chat_id: str, title: str) -> str | None:
+    pending_fn = getattr(store, "pending", None)
+    if not callable(pending_fn):
+        return None
+    try:
+        entries = pending_fn()
+    except Exception:
+        return None
+    for entry in entries:
+        if getattr(entry, "chat_id", None) != chat_id:
+            continue
+        if str(getattr(entry, "source_title", "") or "").strip() != title:
+            continue
+        due = str(getattr(entry, "next_check_at", "") or "")[:10]
+        return due or None
+    return None
+
+
+def _selected_details(result: object) -> str | None:
+    edition = getattr(result, "selected_edition", None)
+    if edition is None:
+        return None
+    values = [
+        str(getattr(edition, "title", "") or "").strip(),
+        "、".join(getattr(edition, "authors", []) or []),
+        str(getattr(edition, "publisher", "") or "").strip(),
+        str(getattr(edition, "publish_date", "") or "").strip(),
+    ]
+    details = " · ".join(value for value in values if value)
+    return details or None
+
+
+def _batch_summary_card(
+    *,
+    mentions: tuple[BookMention, ...],
+    outcomes: tuple[tuple[BookMention, object | None, str | None], ...],
+    chat_id: str,
+    watch_store: object | None,
+) -> dict[str, object]:
+    available: list[tuple[BookMention, object]] = []
+    waiting: list[tuple[BookMention, object]] = []
+    not_found: list[tuple[BookMention, object]] = []
+    failed: list[tuple[BookMention, str | None]] = []
+
+    for mention, result, error in outcomes:
+        if error is not None or result is None:
+            failed.append((mention, error))
+            continue
+        kind = getattr(result, "kind", None)
+        if kind in {WeReadLookupKind.EXACT, WeReadLookupKind.ALTERNATIVE}:
+            available.append((mention, result))
+        elif kind is WeReadLookupKind.UNAVAILABLE:
+            waiting.append((mention, result))
+        elif kind is WeReadLookupKind.NOT_FOUND:
+            not_found.append((mention, result))
+        else:
+            failed.append((mention, None))
+
+    elements: list[dict[str, object]] = [
+        {
+            "tag": "markdown",
+            "content": (
+                f"📚 识别到 **{len(mentions)}** 本书\n"
+                f"✅ 可读 {len(available)} · ⏳ 待上架 {len(waiting)} · "
+                f"🔍 暂未找到 {len(not_found)}"
+                + (f" · ⚠️ 查询失败 {len(failed)}" if failed else "")
+            ),
+        }
+    ]
+
+    if available:
+        elements.append({"tag": "hr"})
+        elements.append({"tag": "markdown", "content": "### ✅ 微信读书可读"})
+        for mention, result in available:
+            details = _selected_details(result)
+            content = f"**《{mention.title}》**"
+            if details and details != mention.title:
+                content += f"\n{details}"
+            elements.append({"tag": "markdown", "content": content})
+            deep_link = str(getattr(result, "deep_link", "") or "").strip()
+            if deep_link:
+                elements.append(
+                    {
+                        "tag": "action",
+                        "actions": [
+                            {
+                                "tag": "button",
+                                "text": {"tag": "plain_text", "content": f"打开《{mention.title}》"},
+                                "type": "primary",
+                                "url": deep_link,
+                            }
+                        ],
+                    }
+                )
+
+    if waiting:
+        elements.append({"tag": "hr"})
+        lines = ["### ⏳ 待上架"]
+        for mention, result in waiting:
+            due = _watch_due_for_title(watch_store, chat_id=chat_id, title=mention.title) if watch_store else None
+            suffix = f" · 下次检查 {due}" if due else ""
+            lines.append(f"- 《{mention.title}》{suffix}")
+            deep_link = str(getattr(result, "deep_link", "") or "").strip()
+            if deep_link:
+                lines.append(f"  [查看微信读书]({deep_link})")
+        elements.append({"tag": "markdown", "content": "\n".join(lines)})
+
+    if not_found:
+        elements.append({"tag": "hr"})
+        lines = ["### 🔍 已帮你记住"]
+        for mention, _result in not_found:
+            due = _watch_due_for_title(watch_store, chat_id=chat_id, title=mention.title) if watch_store else None
+            suffix = f" · 下次重搜 {due}" if due else ""
+            lines.append(f"- 《{mention.title}》{suffix}")
+        lines.append("\n发送 **查看待上架** 可以随时查看完整列表。")
+        elements.append({"tag": "markdown", "content": "\n".join(lines)})
+
+    if failed:
+        elements.append({"tag": "hr"})
+        lines = ["### ⚠️ 本次查询失败"]
+        lines.extend(f"- 《{mention.title}》" for mention, _error in failed)
+        lines.append("稍后重新发送这张图即可重试。")
+        elements.append({"tag": "markdown", "content": "\n".join(lines)})
+
+    template = "green" if available else "blue"
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": False},
+        "header": {
+            "title": {"tag": "plain_text", "content": "书单处理结果"},
+            "template": template,
+        },
+        "elements": elements,
+    }
+
+
 async def _try_handle_waiting_list_command(
     channel: base.ChannelLike,
     message: base.InboundMessageLike,
@@ -125,7 +260,7 @@ async def _try_handle_multi_book_message(
     candidate_store: base.CandidateSelectionStore,
     weread_watch_store: WeReadWatchStoreLike | None = None,
 ) -> bool:
-    """Handle explicit multi-book content as a WeRead-first V1.1 route."""
+    """Handle explicit multi-book content as one summarized WeRead-first result."""
 
     if weread_lookup is None:
         return False
@@ -135,52 +270,35 @@ async def _try_handle_multi_book_message(
         return False
 
     candidate_store.clear(message.chat_id)
-    await channel.send(
-        message.chat_id,
-        {
-            "text": (
-                f"从这段内容里识别到 {len(mentions)} 本书，正在逐本查微信读书：\n"
-                + "\n".join(f"{index}. 《{mention.title}》" for index, mention in enumerate(mentions, start=1))
-            )
-        },
-        {"reply_to": message.message_id},
-    )
-
     results = await _lookup_mentions(mentions, weread_lookup)
+
     for mention, result, error in results:
-        if error is not None:
-            await channel.send(
-                message.chat_id,
-                {"text": f"《{mention.title}》\n微信读书查询暂时失败，请稍后再试。"},
-                {"reply_to": message.message_id},
-            )
+        if error is not None or result is None:
             continue
-
-        result_message = str(getattr(result, "message", "") or "").strip()
-        if not result_message:
-            result_message = "微信读书暂未返回可用结果。"
-
-        watch_message = None
         kind = getattr(result, "kind", None)
         if (
             weread_watch_store is not None
             and kind in {WeReadLookupKind.UNAVAILABLE, WeReadLookupKind.NOT_FOUND}
         ):
-            watch_message = record_unavailable_watch(
+            record_unavailable_watch(
                 chat_id=message.chat_id,
                 source=Edition(title=mention.title),
                 result=result,
                 store=weread_watch_store,
             )
 
-        text = f"《{mention.title}》\n{result_message}"
-        if watch_message:
-            text = f"{text}\n{watch_message}"
-        await channel.send(
-            message.chat_id,
-            {"text": text},
-            {"reply_to": message.message_id},
-        )
+    await channel.send(
+        message.chat_id,
+        {
+            "card": _batch_summary_card(
+                mentions=mentions,
+                outcomes=results,
+                chat_id=message.chat_id,
+                watch_store=weread_watch_store,
+            )
+        },
+        {"reply_to": message.message_id},
+    )
     return True
 
 
