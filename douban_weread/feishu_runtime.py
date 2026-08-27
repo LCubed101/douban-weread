@@ -6,7 +6,7 @@ import os
 import sys
 
 from douban_weread.feishu_bot import ChannelLike
-from douban_weread.feishu_bot_context import build_bot
+from douban_weread.feishu_bot_v11 import build_bot
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
 from douban_weread.safe_logging import install_log_redaction
 from douban_weread.weread_watch_worker import WeReadWatchWorker
@@ -53,10 +53,10 @@ def main() -> None:
         print(str(exc), file=sys.stderr)
         raise SystemExit(2) from exc
 
-    print("Douban × WeRead Feishu Book Inbox starting via WebSocket...")
+    print("Douban × WeRead Feishu Reading Inbox starting via WebSocket...")
     print(
-        "Image/OCR enabled. Douban Want-to-Read writes require two explicit card confirmations and read-back verification; "
-        "confirmed books are followed by a read-only WeRead Edition lookup, and unavailable matches are queued locally for recheck."
+        "Image/OCR enabled. Multi-book inputs with explicit 《...》 titles are routed to read-only WeRead lookup; "
+        "single-book inputs keep the existing Douban confirmation flow."
     )
     print(f"WeRead availability watch enabled: checking every {interval:g} seconds (default: 604800 / 7d).")
     try:
