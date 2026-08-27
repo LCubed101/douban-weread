@@ -7,9 +7,25 @@ import sys
 
 from douban_weread.feishu_bot import ChannelLike
 from douban_weread.feishu_bot_v11 import build_bot
+from douban_weread.feishu_bot_weread_only import build_weread_only_bot
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
 from douban_weread.safe_logging import install_log_redaction
 from douban_weread.weread_watch_worker import WeReadWatchWorker
+
+
+def router_mode() -> str:
+    value = os.getenv("ROUTER_MODE", "douban_weread").strip().casefold() or "douban_weread"
+    aliases = {
+        "default": "douban_weread",
+        "douban": "douban_weread",
+        "douban_weread": "douban_weread",
+        "weread": "weread_only",
+        "weread_only": "weread_only",
+    }
+    resolved = aliases.get(value)
+    if resolved is None:
+        raise RuntimeError("ROUTER_MODE must be 'douban_weread' or 'weread_only'")
+    return resolved
 
 
 def watch_interval_seconds() -> float:
@@ -46,7 +62,8 @@ async def run_runtime(
 def main() -> None:
     install_log_redaction()
     try:
-        channel = build_bot()
+        mode = router_mode()
+        channel = build_weread_only_bot() if mode == "weread_only" else build_bot()
         interval = watch_interval_seconds()
         worker = WeReadWatchWorker()
     except RuntimeError as exc:
@@ -54,10 +71,17 @@ def main() -> None:
         raise SystemExit(2) from exc
 
     print("Douban × WeRead Feishu Reading Inbox starting via WebSocket...")
-    print(
-        "Image/OCR enabled. Multi-book inputs with explicit 《...》 titles are routed to read-only WeRead lookup; "
-        "single-book inputs keep the existing Douban confirmation flow."
-    )
+    print(f"Router mode: {mode}")
+    if mode == "weread_only":
+        print(
+            "WeRead-only mode enabled. Text titles and screenshots are routed directly to read-only WeRead lookup; "
+            "Douban credentials are not required."
+        )
+    else:
+        print(
+            "Image/OCR enabled. Multi-book inputs with explicit 《...》 titles are routed to read-only WeRead lookup; "
+            "single-book inputs keep the existing Douban confirmation flow."
+        )
     print(f"WeRead availability watch enabled: checking every {interval:g} seconds (default: 604800 / 7d).")
     try:
         asyncio.run(run_runtime(channel, worker, interval_seconds=interval))
