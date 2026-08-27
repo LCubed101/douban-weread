@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
@@ -33,7 +34,7 @@ class WeReadLookupResult:
 
 
 class WeReadEditionLookup:
-    """Read-only post-Douban lookup for a readable WeRead Edition."""
+    """Read-only WeRead lookup for either a resolved Edition or a title-only mention."""
 
     def __init__(
         self,
@@ -101,6 +102,73 @@ class WeReadEditionLookup:
             ),
         )
 
+    def lookup_title(self, title: str) -> WeReadLookupResult:
+        """Resolve a recommendation that contains only a title.
+
+        This path is intentionally different from Edition-to-Edition alignment.
+        It trusts only an exact normalized title returned by official WeRead
+        search, so a flomo/book-list mention does not fail merely because author,
+        publisher or ISBN metadata is absent. It still fails closed when search
+        returns only fuzzy/different titles.
+        """
+
+        query = title.strip()
+        if not query:
+            raise ValueError("WeRead title lookup requires a non-empty title")
+
+        wanted = _normalize_lookup_title(query)
+        exact_available: tuple[object, Edition] | None = None
+        exact_unavailable: tuple[object, Edition] | None = None
+
+        candidates = self.provider.search_books(query, count=self.search_limit)
+        for candidate in candidates:
+            book_id = str(getattr(candidate, "book_id", "") or "").strip()
+            if not book_id:
+                continue
+            edition = self.provider.get_book(book_id)
+            if edition is None or _normalize_lookup_title(edition.title) != wanted:
+                continue
+
+            soldout = bool(getattr(candidate, "soldout", False))
+            if soldout:
+                if exact_unavailable is None:
+                    exact_unavailable = (candidate, edition)
+                continue
+            exact_available = (candidate, edition)
+            break
+
+        if exact_available is not None:
+            candidate, edition = exact_available
+            deep_link = _candidate_deep_link(candidate, edition)
+            return WeReadLookupResult(
+                kind=WeReadLookupKind.EXACT,
+                source_title=query,
+                selected_edition=edition,
+                deep_link=deep_link,
+                message=_title_only_available_message(edition, deep_link=deep_link),
+            )
+
+        if exact_unavailable is not None:
+            candidate, edition = exact_unavailable
+            return WeReadLookupResult(
+                kind=WeReadLookupKind.UNAVAILABLE,
+                source_title=query,
+                selected_edition=edition,
+                deep_link=_candidate_deep_link(candidate, edition),
+                message=f"微信读书搜索到了同名《{edition.title}》，但当前目录状态显示不可读。",
+            )
+
+        return WeReadLookupResult(
+            kind=WeReadLookupKind.NOT_FOUND,
+            source_title=query,
+            selected_edition=None,
+            deep_link=None,
+            message=(
+                f"微信读书当前搜索没有找到可安全确认的同名《{query}》。"
+                "为避免把相似书名误配成同一本，暂不自动选择其他结果。"
+            ),
+        )
+
 
 def _available_message(
     source: Edition,
@@ -127,6 +195,38 @@ def _available_message(
     if deep_link:
         lines.append(f"可读链接：{deep_link}")
     return "\n".join(lines)
+
+
+def _title_only_available_message(selected: Edition, *, deep_link: str | None) -> str:
+    details = " · ".join(
+        value
+        for value in (
+            selected.title,
+            "、".join(selected.authors) if selected.authors else None,
+            selected.publisher,
+            selected.publish_date,
+        )
+        if value
+    )
+    lines = ["微信读书：找到同名可读版本。", details or selected.title]
+    if deep_link:
+        lines.append(f"可读链接：{deep_link}")
+    return "\n".join(lines)
+
+
+def _normalize_lookup_title(value: str) -> str:
+    value = value.casefold().strip()
+    return re.sub(r"[\s·•・:：,，.。!！?？—–_\-《》()（）\[\]【】]+", "", value)
+
+
+def _candidate_deep_link(candidate: object, edition: Edition) -> str | None:
+    value = str(getattr(candidate, "deep_link", "") or "").strip()
+    if value:
+        return value
+    metadata_value = edition.source_metadata.get("deep_link")
+    if isinstance(metadata_value, str) and metadata_value.strip():
+        return metadata_value.strip()
+    return None
 
 
 WEREAD_LOOKUP_ERRORS = (WeReadProviderError, ValueError)
