@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from douban_weread.core.models import Edition
+from douban_weread.storage.weread_waiting_policy import next_check_at as policy_next_check_at
 
 
 def default_weread_watch_db_path() -> Path:
@@ -34,6 +35,10 @@ class WeReadWatchEntry:
     created_at: str
     updated_at: str
     notified_at: str | None = None
+    watch_kind: str = "not_found"
+    check_count: int = 0
+    last_checked_at: str | None = None
+    next_check_at: str | None = None
 
     def source_edition(self) -> Edition:
         return Edition(
@@ -59,6 +64,7 @@ class WeReadAvailabilityWatchStore:
         source: Edition,
         weread: Edition | None,
         deep_link: str | None,
+        watch_kind: str | None = None,
     ) -> WeReadWatchEntry:
         chat = chat_id.strip()
         if not chat:
@@ -66,7 +72,13 @@ class WeReadAvailabilityWatchStore:
         if not source.title.strip():
             raise ValueError("source title is required for a WeRead availability watch")
 
-        now = datetime.now(timezone.utc).isoformat()
+        kind = (watch_kind or ("waiting" if weread is not None else "not_found")).strip()
+        if kind not in {"waiting", "not_found"}:
+            raise ValueError("watch_kind must be 'waiting' or 'not_found'")
+
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        due = policy_next_check_at(watch_kind=kind, now=now_dt)
         self.initialize()
         authors_json = json.dumps(source.authors, ensure_ascii=False)
         with self._connect() as conn:
@@ -75,8 +87,9 @@ class WeReadAvailabilityWatchStore:
                 INSERT INTO weread_availability_watch(
                     chat_id, source_title, source_authors_json, source_publisher,
                     source_publish_date, source_douban_id, source_isbn,
-                    weread_book_id, weread_title, deep_link, status, created_at, updated_at, notified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL)
+                    weread_book_id, weread_title, deep_link, status, created_at, updated_at, notified_at,
+                    watch_kind, check_count, last_checked_at, next_check_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, NULL, ?, 1, ?, ?)
                 ON CONFLICT(chat_id, source_douban_id, source_title) DO UPDATE SET
                     source_authors_json=excluded.source_authors_json,
                     source_publisher=excluded.source_publisher,
@@ -87,6 +100,10 @@ class WeReadAvailabilityWatchStore:
                     deep_link=excluded.deep_link,
                     status='pending',
                     notified_at=NULL,
+                    watch_kind=excluded.watch_kind,
+                    check_count=weread_availability_watch.check_count + 1,
+                    last_checked_at=excluded.last_checked_at,
+                    next_check_at=excluded.next_check_at,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -102,6 +119,9 @@ class WeReadAvailabilityWatchStore:
                     deep_link,
                     now,
                     now,
+                    kind,
+                    now,
+                    due,
                 ),
             )
             conn.commit()
@@ -121,6 +141,45 @@ class WeReadAvailabilityWatchStore:
                 _SELECT_COLUMNS + " WHERE status='pending' ORDER BY created_at ASC, id ASC"
             ).fetchall()
         return [_row_to_entry(row) for row in rows]
+
+    def due_pending(self, *, now: datetime | None = None) -> list[WeReadWatchEntry]:
+        if not self.path.exists():
+            return []
+        self.initialize()
+        current = (now or datetime.now(timezone.utc)).isoformat()
+        with self._connect() as conn:
+            rows = conn.execute(
+                _SELECT_COLUMNS
+                + " WHERE status='pending' AND (next_check_at IS NULL OR next_check_at<=?)"
+                + " ORDER BY COALESCE(next_check_at, created_at) ASC, id ASC",
+                (current,),
+            ).fetchall()
+        return [_row_to_entry(row) for row in rows]
+
+    def mark_checked_pending(self, entry_id: int) -> WeReadWatchEntry:
+        if entry_id < 1:
+            raise ValueError("watch entry id must be >= 1")
+        self.initialize()
+        with self._connect() as conn:
+            row = conn.execute(_SELECT_COLUMNS + " WHERE id=? AND status='pending'", (entry_id,)).fetchone()
+            if row is None:
+                raise ValueError("pending WeRead watch entry was not found")
+            entry = _row_to_entry(row)
+            now_dt = datetime.now(timezone.utc)
+            now = now_dt.isoformat()
+            due = policy_next_check_at(watch_kind=entry.watch_kind, now=now_dt)
+            conn.execute(
+                """
+                UPDATE weread_availability_watch
+                SET check_count=check_count+1, last_checked_at=?, next_check_at=?, updated_at=?
+                WHERE id=? AND status='pending'
+                """,
+                (now, due, now, entry_id),
+            )
+            conn.commit()
+            row = conn.execute(_SELECT_COLUMNS + " WHERE id=?", (entry_id,)).fetchone()
+        assert row is not None
+        return _row_to_entry(row)
 
     def unnotified_available(self) -> list[WeReadWatchEntry]:
         if not self.path.exists():
@@ -152,10 +211,11 @@ class WeReadAvailabilityWatchStore:
                 """
                 UPDATE weread_availability_watch
                 SET weread_book_id=?, weread_title=?, deep_link=?,
-                    status='available', updated_at=?, notified_at=NULL
+                    status='available', updated_at=?, notified_at=NULL,
+                    check_count=check_count+1, last_checked_at=?, next_check_at=NULL
                 WHERE id=? AND status='pending'
                 """,
-                (weread.weread_id, weread.title, deep_link, now, entry_id),
+                (weread.weread_id, weread.title, deep_link, now, now, entry_id),
             )
             if cursor.rowcount != 1:
                 raise ValueError("pending WeRead watch entry was not found")
@@ -206,13 +266,25 @@ class WeReadAvailabilityWatchStore:
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     notified_at TEXT,
+                    watch_kind TEXT NOT NULL DEFAULT 'not_found',
+                    check_count INTEGER NOT NULL DEFAULT 0,
+                    last_checked_at TEXT,
+                    next_check_at TEXT,
                     UNIQUE(chat_id, source_douban_id, source_title)
                 );
                 """
             )
             columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(weread_availability_watch)")}
-            if "notified_at" not in columns:
-                conn.execute("ALTER TABLE weread_availability_watch ADD COLUMN notified_at TEXT")
+            migrations = {
+                "notified_at": "ALTER TABLE weread_availability_watch ADD COLUMN notified_at TEXT",
+                "watch_kind": "ALTER TABLE weread_availability_watch ADD COLUMN watch_kind TEXT NOT NULL DEFAULT 'not_found'",
+                "check_count": "ALTER TABLE weread_availability_watch ADD COLUMN check_count INTEGER NOT NULL DEFAULT 0",
+                "last_checked_at": "ALTER TABLE weread_availability_watch ADD COLUMN last_checked_at TEXT",
+                "next_check_at": "ALTER TABLE weread_availability_watch ADD COLUMN next_check_at TEXT",
+            }
+            for name, sql in migrations.items():
+                if name not in columns:
+                    conn.execute(sql)
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -222,7 +294,8 @@ class WeReadAvailabilityWatchStore:
 _SELECT_COLUMNS = """
 SELECT id, chat_id, source_title, source_authors_json, source_publisher,
        source_publish_date, source_douban_id, source_isbn,
-       weread_book_id, weread_title, deep_link, status, created_at, updated_at, notified_at
+       weread_book_id, weread_title, deep_link, status, created_at, updated_at, notified_at,
+       watch_kind, check_count, last_checked_at, next_check_at
 FROM weread_availability_watch
 """
 
@@ -248,5 +321,9 @@ def _row_to_entry(row: tuple[object, ...]) -> WeReadWatchEntry:
         status=str(row[11]),
         created_at=str(row[12]),
         updated_at=str(row[13]),
-        notified_at=str(row[14]) if len(row) > 14 and row[14] is not None else None,
+        notified_at=str(row[14]) if row[14] is not None else None,
+        watch_kind=str(row[15]) if len(row) > 15 and row[15] is not None else "not_found",
+        check_count=int(row[16]) if len(row) > 16 and row[16] is not None else 0,
+        last_checked_at=str(row[17]) if len(row) > 17 and row[17] is not None else None,
+        next_check_at=str(row[18]) if len(row) > 18 and row[18] is not None else None,
     )
