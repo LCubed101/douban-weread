@@ -8,20 +8,18 @@
 
 ## 试用范围
 
-当前最适合测试：
+开启 `ROUTER_MODE=weread_only` 后：
 
 ```text
-flomo AI 洞察 / 书单截图
+单独书名 / flomo AI 洞察 / 书单截图
 → 发给自己的 Feishu Bot
-→ 本地 OCR 提取多个《书名》
+→ 文本直接取书名，截图本地 OCR 提取《书名》
 → 查询微信读书
 → 可读书返回按钮
 → 未找到的书进入 Waiting List，之后重新搜索
 ```
 
-这轮朋友测试 **不测试豆瓣路径**。
-
-当前代码中，单独发送一个普通书名仍属于旧的 Douban-first 单书流程。因此朋友试用时请优先发送包含多个明确 `《书名》` 的 flomo / 书单截图或文本。后续会再把单书输入也做成显式 WeRead-only 模式。
+这轮朋友测试 **完全不走豆瓣路径**。
 
 ## 1. 准备环境
 
@@ -91,15 +89,19 @@ cp .env.example .env
 ```env
 FEISHU_APP_ID='自己的 App ID'
 FEISHU_APP_SECRET='自己的 App Secret'
+ROUTER_MODE=weread_only
 WEREAD_API_KEY='自己的 WeRead API Key'
 DATABASE_URL='sqlite:///data/douban-weread.db'
-```
-
-`DOUBAN_COOKIE` **保持空白即可**：
-
-```env
 DOUBAN_COOKIE=
 ```
+
+关键是：
+
+```env
+ROUTER_MODE=weread_only
+```
+
+开启后，Bot 不会把单独书名送进 Douban-first 流程，也不需要豆瓣凭证。
 
 不要把 `.env` 发给其他人，也不要提交到 GitHub。
 
@@ -133,13 +135,26 @@ set +a
 douban-weread-feishu
 ```
 
+启动日志应包含：
+
+```text
+Router mode: weread_only
+WeRead-only mode enabled.
+```
+
 看到 WebSocket 已连接后，回到飞书。
 
-第一次只做一个测试：
+建议做两个测试：
 
-> 把一张 flomo AI 洞察 / 书单推荐截图直接发给 Bot。
+1. 直接发送一个书名，例如 `专注`；
+2. 把一张 flomo AI 洞察 / 书单推荐截图直接发给 Bot。
 
-理想结果：Bot 返回 **一张书单处理结果卡**，可读书有「打开《书名》」按钮，未找到的书会自动记住。
+理想结果：
+
+- 单书直接返回微信读书处理结果，不出现豆瓣候选；
+- 多书截图返回一张「书单处理结果」卡；
+- 可读书有「打开《书名》」按钮；
+- 未找到的书会自动记住，并进入 Waiting List。
 
 前台运行时按 `Control + C` 停止。
 
@@ -176,7 +191,7 @@ launchctl kickstart -k gui/$(id -u)/com.lcubed.douban-weread.feishu
 
 ## 9. 朋友测试时只需要知道这一句话
 
-> 把 flomo 的书单推荐截图直接发给 Bot 就行。
+> 直接发书名，或者把 flomo 的书单推荐截图发给 Bot 就行。
 
 不要先解释 Waiting List、OCR、匹配算法。让第一次使用尽量自然；哪里看不懂、哪里想点却找不到按钮，直接截图反馈即可。
 
@@ -184,4 +199,4 @@ launchctl kickstart -k gui/$(id -u)/com.lcubed.douban-weread.feishu
 
 - 微信读书官方 Agent API 是只读接口，项目不会声称能自动加入书架。
 - 微信读书 App 中能看到的「待上架」书，不一定会出现在 Agent API 搜索结果里。
-- 当前 friends beta 的纯 WeRead 流程最适合 **多书截图 / 多书文本**；单书普通文本输入仍可能进入旧 Douban-first 路径，因此暂不作为这轮测试入口。
+- 截图提取目前优先识别明确的 `《书名》`；如果图片里没有稳定识别到书名号，Bot 会请用户换图或直接发送书名。
