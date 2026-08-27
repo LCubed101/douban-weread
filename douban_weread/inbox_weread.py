@@ -105,11 +105,14 @@ class WeReadEditionLookup:
     def lookup_title(self, title: str) -> WeReadLookupResult:
         """Resolve a recommendation that contains only a title.
 
-        This path is intentionally different from Edition-to-Edition alignment.
-        It trusts only an exact normalized title returned by official WeRead
-        search, so a flomo/book-list mention does not fail merely because author,
-        publisher or ISBN metadata is absent. It still fails closed when search
-        returns only fuzzy/different titles.
+        The title-only path deliberately uses official search evidence before
+        requiring `/book/info`. This matters for books that WeRead exposes in
+        search as sold out / waiting-to-be-published: those entries can have an
+        exact title and deep link even when full book metadata is unavailable.
+
+        Readable results still require a resolved Edition from `/book/info`.
+        Waiting results may safely use the exact-title search candidate itself.
+        Fuzzy/different titles remain fail-closed.
         """
 
         query = title.strip()
@@ -122,17 +125,30 @@ class WeReadEditionLookup:
 
         candidates = self.provider.search_books(query, count=self.search_limit)
         for candidate in candidates:
+            candidate_title = str(getattr(candidate, "title", "") or "").strip()
+            if not candidate_title or _normalize_lookup_title(candidate_title) != wanted:
+                continue
+
             book_id = str(getattr(candidate, "book_id", "") or "").strip()
+            soldout = bool(getattr(candidate, "soldout", False))
+
+            # A sold-out exact-title search candidate is sufficient evidence that
+            # WeRead knows this book but it is not currently readable. Do not
+            # discard it merely because `/book/info` has not exposed metadata yet.
+            if soldout:
+                edition = self.provider.get_book(book_id) if book_id else None
+                if edition is None:
+                    edition = _edition_from_search_candidate(candidate)
+                if exact_unavailable is None:
+                    exact_unavailable = (candidate, edition)
+                continue
+
+            # Positive readability remains conservative: require full book info
+            # and confirm its normalized title is still exact.
             if not book_id:
                 continue
             edition = self.provider.get_book(book_id)
             if edition is None or _normalize_lookup_title(edition.title) != wanted:
-                continue
-
-            soldout = bool(getattr(candidate, "soldout", False))
-            if soldout:
-                if exact_unavailable is None:
-                    exact_unavailable = (candidate, edition)
                 continue
             exact_available = (candidate, edition)
             break
@@ -150,12 +166,16 @@ class WeReadEditionLookup:
 
         if exact_unavailable is not None:
             candidate, edition = exact_unavailable
+            deep_link = _candidate_deep_link(candidate, edition)
+            lines = [f"微信读书搜索到了同名《{edition.title}》，当前处于待上架/不可读状态。"]
+            if deep_link:
+                lines.append(f"查看微信读书：{deep_link}")
             return WeReadLookupResult(
                 kind=WeReadLookupKind.UNAVAILABLE,
                 source_title=query,
                 selected_edition=edition,
-                deep_link=_candidate_deep_link(candidate, edition),
-                message=f"微信读书搜索到了同名《{edition.title}》，但当前目录状态显示不可读。",
+                deep_link=deep_link,
+                message="\n".join(lines),
             )
 
         return WeReadLookupResult(
@@ -217,6 +237,25 @@ def _title_only_available_message(selected: Edition, *, deep_link: str | None) -
 def _normalize_lookup_title(value: str) -> str:
     value = value.casefold().strip()
     return re.sub(r"[\s·•・:：,，.。!！?？—–_\-《》()（）\[\]【】]+", "", value)
+
+
+def _edition_from_search_candidate(candidate: object) -> Edition:
+    book_id = str(getattr(candidate, "book_id", "") or "").strip() or None
+    title = str(getattr(candidate, "title", "") or "").strip()
+    author = str(getattr(candidate, "author", "") or "").strip()
+    publisher = str(getattr(candidate, "publisher", "") or "").strip() or None
+    deep_link = str(getattr(candidate, "deep_link", "") or "").strip() or None
+    return Edition(
+        title=title,
+        authors=[author] if author else [],
+        publisher=publisher,
+        weread_id=book_id,
+        source_metadata={
+            "provider": "weread_official_search",
+            "deep_link": deep_link,
+            "search_only": True,
+        },
+    )
 
 
 def _candidate_deep_link(candidate: object, edition: Edition) -> str | None:
