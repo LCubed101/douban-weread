@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 
 from douban_weread.core.models import Edition
-from douban_weread.feishu_hybrid_batch import _pick_douban_candidate
+from douban_weread.feishu_hybrid_batch import _main_title, _pick_douban_candidate
 from douban_weread.inbox import BookInboxResolutionKind
 
 
@@ -60,6 +60,19 @@ class HybridBatchSelectionTest(unittest.TestCase):
             candidates=candidates,
         )
         self.assertIsNone(_pick_douban_candidate(resolution, "测试书"))
+
+    def test_extracts_main_title_from_chinese_subtitle_separator(self) -> None:
+        self.assertEqual(
+            _main_title("如何改变世界：社会企业家与新思想的威力"),
+            "如何改变世界",
+        )
+
+    def test_extracts_main_title_from_ascii_subtitle_separator(self) -> None:
+        self.assertEqual(_main_title("主标题: 副标题"), "主标题")
+
+    def test_does_not_fallback_without_real_subtitle(self) -> None:
+        self.assertIsNone(_main_title("如何改变世界"))
+        self.assertIsNone(_main_title("标题："))
 
 
 if __name__ == "__main__":
