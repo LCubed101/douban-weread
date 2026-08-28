@@ -36,6 +36,18 @@ class FakeShelf:
         )
 
 
+class FakeBatchStore:
+    def __init__(self, due, pending) -> None:
+        self._due = list(due)
+        self._pending = list(pending)
+
+    def due_pending(self):
+        return list(self._due)
+
+    def pending(self):
+        return list(self._pending)
+
+
 class WeReadWatchWorkerTests(unittest.TestCase):
     def test_available_transition_emits_notification_and_waits_for_ack(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -113,6 +125,21 @@ class WeReadWatchWorkerTests(unittest.TestCase):
 
             self.assertEqual(worker.run_once(), [])
             self.assertEqual(len(store.pending()), 1)
+
+    def test_due_not_found_entry_pulls_same_chat_not_found_list_into_one_batch(self) -> None:
+        due = SimpleNamespace(id=1, chat_id="chat_a", watch_kind="not_found")
+        same_cohort = SimpleNamespace(id=2, chat_id="chat_a", watch_kind="not_found")
+        waiting = SimpleNamespace(id=3, chat_id="chat_a", watch_kind="waiting")
+        other_chat = SimpleNamespace(id=4, chat_id="chat_b", watch_kind="not_found")
+        store = FakeBatchStore(
+            due=[due],
+            pending=[due, same_cohort, waiting, other_chat],
+        )
+        worker = WeReadWatchWorker(store=store, lookup=SimpleNamespace(), shelf_provider=None)
+
+        batched = worker._due_batch_entries()
+
+        self.assertEqual([entry.id for entry in batched], [1, 2])
 
 
 if __name__ == "__main__":
