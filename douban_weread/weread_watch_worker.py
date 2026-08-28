@@ -33,11 +33,7 @@ class WeReadWatchWorker:
         self.shelf_provider = shelf_provider or getattr(self.lookup, "provider", None)
 
     def run_once(self) -> list[WeReadWatchNotification]:
-        due_entries = (
-            self.store.due_pending()
-            if hasattr(self.store, "due_pending")
-            else self.store.pending()
-        )
+        due_entries = self._due_batch_entries()
         for entry in due_entries:
             result = self._lookup_entry(entry)
             if result.kind in {WeReadLookupKind.EXACT, WeReadLookupKind.ALTERNATIVE}:
@@ -76,6 +72,31 @@ class WeReadWatchWorker:
                 )
             )
         return notifications
+
+    def _due_batch_entries(self):
+        """Recheck a user's waiting list as one cohort instead of one book at a time.
+
+        The first due entry starts a batch for the same chat and watch kind. All
+        pending entries in that cohort are checked in the same run and therefore
+        receive the same next 30/90-day cadence after a miss. `waiting` (30d) and
+        `not_found` (90d) cohorts stay separate so a 30-day wait does not pull a
+        90-day search forward.
+        """
+
+        due_method = getattr(self.store, "due_pending", None)
+        if not callable(due_method):
+            return list(self.store.pending())
+
+        due = list(due_method())
+        if not due:
+            return []
+
+        cohort_keys = {(entry.chat_id, entry.watch_kind) for entry in due}
+        selected = {entry.id: entry for entry in due}
+        for entry in self.store.pending():
+            if (entry.chat_id, entry.watch_kind) in cohort_keys:
+                selected[entry.id] = entry
+        return sorted(selected.values(), key=lambda entry: entry.id)
 
     def _lookup_entry(self, entry):
         source = entry.source_edition()
