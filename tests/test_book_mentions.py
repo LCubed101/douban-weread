@@ -22,8 +22,12 @@ class BookMentionExtractorTest(unittest.TestCase):
         mentions = extract_book_mentions(text)
         self.assertEqual(
             [mention.title for mention in mentions],
-            ["价值主张设计", "商业模式 新生代"],
+            ["价值主张设计", "商业模式新生代"],
         )
+
+    def test_recovers_ocr_space_inside_chinese_title(self) -> None:
+        mentions = extract_book_mentions("推荐《快思 慢想》。")
+        self.assertEqual([mention.title for mention in mentions], ["快思慢想"])
 
     def test_accepts_ocr_angle_book_marks(self) -> None:
         text = "OCR 结果：〈价值主张设计〉和《商业模式新生代》。"
