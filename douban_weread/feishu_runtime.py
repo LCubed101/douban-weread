@@ -8,6 +8,7 @@ import sys
 from douban_weread.feishu_bot import ChannelLike
 from douban_weread.feishu_bot_v11 import build_bot
 from douban_weread.feishu_bot_weread_only import build_weread_only_bot
+from douban_weread.feishu_multi_image import prepare_multi_image_support
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
 from douban_weread.safe_logging import install_log_redaction
 from douban_weread.weread_watch_worker import WeReadWatchWorker
@@ -62,6 +63,7 @@ async def run_runtime(
 def main() -> None:
     install_log_redaction()
     try:
+        prepare_multi_image_support()
         mode = router_mode()
         channel = build_weread_only_bot() if mode == "weread_only" else build_bot()
         interval = watch_interval_seconds()
@@ -72,6 +74,7 @@ def main() -> None:
 
     print("Douban × WeRead Feishu Reading Inbox starting via WebSocket...")
     print(f"Router mode: {mode}")
+    print("Multi-image capture enabled: image resources in one message are OCRed together before book extraction.")
     if mode == "weread_only":
         print(
             "WeRead-only mode enabled. Text titles and screenshots are routed directly to read-only WeRead lookup; "
