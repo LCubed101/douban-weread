@@ -8,6 +8,7 @@ import sys
 from douban_weread.feishu_bot import ChannelLike
 from douban_weread.feishu_bot_v11 import build_bot
 from douban_weread.feishu_bot_weread_only import build_weread_only_bot
+from douban_weread.feishu_compact_douban import prepare_compact_douban_flow
 from douban_weread.feishu_multi_image import prepare_multi_image_support
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
 from douban_weread.safe_logging import install_log_redaction
@@ -65,6 +66,8 @@ def main() -> None:
     try:
         prepare_multi_image_support()
         mode = router_mode()
+        if mode == "douban_weread":
+            prepare_compact_douban_flow()
         channel = build_weread_only_bot() if mode == "weread_only" else build_bot()
         interval = watch_interval_seconds()
         worker = WeReadWatchWorker()
@@ -82,8 +85,8 @@ def main() -> None:
         )
     else:
         print(
-            "Image/OCR enabled. Multi-book inputs with explicit 《...》 titles are routed to read-only WeRead lookup; "
-            "single-book inputs keep the existing Douban confirmation flow."
+            "Hybrid mode enabled. Multi-book captures route to WeRead; selecting a Douban edition is the final "
+            "confirmation for Want-to-Read, so no second confirmation card is required."
         )
     print(f"WeRead availability watch enabled: checking every {interval:g} seconds (default: 604800 / 7d).")
     try:
