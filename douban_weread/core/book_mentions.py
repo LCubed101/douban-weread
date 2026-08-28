@@ -6,9 +6,9 @@ from dataclasses import dataclass
 
 # OCR can insert a line break inside a book title or occasionally recognize
 # 《》 as the visually similar 〈〉 pair. Keep the extractor conservative by
-# still requiring an explicit pair of Chinese title marks, but allow internal
-# whitespace/newlines so long screenshots do not lose a valid title.
+# still requiring an explicit pair of Chinese title marks.
 _BOOK_TITLE_RE = re.compile(r"[《〈](?P<title>[^《》〈〉]{1,120})[》〉]")
+_HAN_SPACE_RE = re.compile(r"(?<=[\u3400-\u9fff])\s+(?=[\u3400-\u9fff])")
 
 
 @dataclass(slots=True, frozen=True)
@@ -20,12 +20,10 @@ class BookMention:
 def extract_book_mentions(text: str) -> tuple[BookMention, ...]:
     """Extract high-confidence book mentions without calling any provider.
 
-    V1.1 deliberately prefers precision over recall. For the first real-world
-    flomo slice, only explicit Chinese book-title marks are accepted. OCR line
-    breaks inside the marks are normalized back to spaces. Generic corner
-    quotes such as 「系统」 are intentionally ignored because flomo insight
-    prose uses them heavily for concepts that are not books. Duplicate titles
-    collapse while preserving first-seen order.
+    V1.1 prefers precision over recall: only explicit Chinese book-title marks
+    are accepted. OCR line breaks/spaces between Chinese title characters are
+    repaired, while generic corner quotes such as 「系统」 remain ignored.
+    Duplicate titles collapse while preserving first-seen order.
     """
 
     if not text:
@@ -46,7 +44,12 @@ def extract_book_mentions(text: str) -> tuple[BookMention, ...]:
 
 
 def _normalize_title(value: str) -> str:
-    return " ".join(value.split()).strip(" ，,。；;：:、")
+    normalized = " ".join(value.split()).strip(" ，,。；;：:、")
+    previous = None
+    while normalized != previous:
+        previous = normalized
+        normalized = _HAN_SPACE_RE.sub("", normalized)
+    return normalized
 
 
 def _dedupe_key(value: str) -> str:

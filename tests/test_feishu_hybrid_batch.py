@@ -9,7 +9,19 @@ from douban_weread.inbox import BookInboxResolutionKind
 
 
 class HybridBatchSelectionTest(unittest.TestCase):
-    def test_picks_unique_douban_edition_matching_weread_metadata(self) -> None:
+    def test_uses_exact_title_douban_even_without_weread(self) -> None:
+        candidates = (
+            Edition(title="深度工作", publisher="甲出版社", publish_date="2017-01", douban_id="1"),
+            Edition(title="深度工作（新版）", publisher="乙出版社", publish_date="2024-01", douban_id="2"),
+        )
+        resolution = SimpleNamespace(
+            kind=BookInboxResolutionKind.MULTIPLE_CANDIDATES,
+            candidates=candidates,
+        )
+        picked = _pick_douban_candidate(resolution, "深度工作")
+        self.assertEqual(picked.douban_id, "1")
+
+    def test_weread_breaks_tie_between_exact_title_editions(self) -> None:
         candidates = (
             Edition(
                 title="商业模式新生代",
@@ -35,22 +47,19 @@ class HybridBatchSelectionTest(unittest.TestCase):
                 publish_date="2011-08-09",
             )
         )
-        picked = _pick_douban_candidate(resolution, weread_result)
+        picked = _pick_douban_candidate(resolution, "商业模式新生代", weread_result)
         self.assertEqual(picked.douban_id, "1")
 
-    def test_does_not_guess_when_candidates_are_equally_plausible(self) -> None:
+    def test_fuzzy_only_candidates_still_fail_closed(self) -> None:
         candidates = (
-            Edition(title="测试书", publisher="同一出版社", publish_date="2024-01", douban_id="1"),
-            Edition(title="测试书", publisher="同一出版社", publish_date="2024-01", douban_id="2"),
+            Edition(title="测试书：新版", douban_id="1"),
+            Edition(title="测试书方法论", douban_id="2"),
         )
         resolution = SimpleNamespace(
             kind=BookInboxResolutionKind.MULTIPLE_CANDIDATES,
             candidates=candidates,
         )
-        weread_result = SimpleNamespace(
-            selected_edition=Edition(title="测试书", publisher="同一出版社", publish_date="2024-01")
-        )
-        self.assertIsNone(_pick_douban_candidate(resolution, weread_result))
+        self.assertIsNone(_pick_douban_candidate(resolution, "测试书"))
 
 
 if __name__ == "__main__":
