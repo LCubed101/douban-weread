@@ -8,7 +8,9 @@ import sys
 from douban_weread.feishu_bot import ChannelLike
 from douban_weread.feishu_bot_v11 import build_bot
 from douban_weread.feishu_bot_weread_only import build_weread_only_bot
+from douban_weread.feishu_capture_buffer import buffered_channel_factory
 from douban_weread.feishu_compact_douban import prepare_compact_douban_flow
+from douban_weread.feishu_hybrid_batch import prepare_hybrid_batch_douban
 from douban_weread.feishu_multi_image import prepare_multi_image_support
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
 from douban_weread.safe_logging import install_log_redaction
@@ -43,6 +45,17 @@ def watch_interval_seconds() -> float:
     return value
 
 
+def image_burst_quiet_seconds() -> float:
+    raw = os.getenv("DOUBAN_WEREAD_IMAGE_BURST_SECONDS", "0.9").strip()
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise RuntimeError("DOUBAN_WEREAD_IMAGE_BURST_SECONDS must be a number") from exc
+    if value < 0.2 or value > 5:
+        raise RuntimeError("DOUBAN_WEREAD_IMAGE_BURST_SECONDS must be between 0.2 and 5 seconds")
+    return value
+
+
 async def run_runtime(
     channel: ChannelLike,
     worker: WeReadWatchWorker,
@@ -68,7 +81,14 @@ def main() -> None:
         mode = router_mode()
         if mode == "douban_weread":
             prepare_compact_douban_flow()
-        channel = build_weread_only_bot() if mode == "weread_only" else build_bot()
+            prepare_hybrid_batch_douban()
+        quiet_seconds = image_burst_quiet_seconds()
+        channel_factory = buffered_channel_factory(quiet_seconds=quiet_seconds)
+        channel = (
+            build_weread_only_bot(channel_factory=channel_factory)
+            if mode == "weread_only"
+            else build_bot(channel_factory=channel_factory)
+        )
         interval = watch_interval_seconds()
         worker = WeReadWatchWorker()
     except RuntimeError as exc:
@@ -77,7 +97,9 @@ def main() -> None:
 
     print("Douban × WeRead Feishu Reading Inbox starting via WebSocket...")
     print(f"Router mode: {mode}")
-    print("Multi-image capture enabled: image resources in one message are OCRed together before book extraction.")
+    print(
+        f"Image burst capture enabled: consecutive image events are merged after {quiet_seconds:g}s of quiet time."
+    )
     if mode == "weread_only":
         print(
             "WeRead-only mode enabled. Text titles and screenshots are routed directly to read-only WeRead lookup; "
@@ -85,8 +107,8 @@ def main() -> None:
         )
     else:
         print(
-            "Hybrid mode enabled. Multi-book captures route to WeRead; selecting a Douban edition is the final "
-            "confirmation for Want-to-Read, so no second confirmation card is required."
+            "Hybrid mode enabled. Multi-book captures query WeRead and conservatively sync Douban Want-to-Read when "
+            "one Douban edition can be resolved safely; ambiguous editions stay pending instead of being guessed."
         )
     print(f"WeRead availability watch enabled: checking every {interval:g} seconds (default: 604800 / 7d).")
     try:
