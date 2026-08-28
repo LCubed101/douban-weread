@@ -26,6 +26,21 @@ def _norm(value: str | None) -> str:
     return re.sub(r"[\W_]+", "", str(value or "")).casefold()
 
 
+def _main_title(value: str) -> str | None:
+    """Return a conservative main-title fallback for `主标题：副标题` mentions."""
+
+    title = str(value or "").strip()
+    for separator in ("：", ":"):
+        if separator not in title:
+            continue
+        main, subtitle = title.split(separator, 1)
+        main = main.strip()
+        subtitle = subtitle.strip()
+        if len(main) >= 2 and subtitle:
+            return main
+    return None
+
+
 def _ym(value: str | None) -> str:
     text = str(value or "")
     match = re.search(r"(\d{4})[-/.年]?(\d{1,2})?", text)
@@ -89,9 +104,6 @@ def _pick_douban_candidate(
         if best_score >= 8 and len(best) == 1:
             return best[0]
 
-    # Douban is the primary record. For several exact-title editions, trust
-    # Douban's ranking rather than withholding Want-to-Read because WeRead is
-    # missing. Fuzzy titles still fail closed.
     if exact:
         return exact[0]
     return None
@@ -229,11 +241,23 @@ def prepare_hybrid_batch_douban() -> None:
 
         candidate_store.clear(message.chat_id)
 
-        # 1) Douban first. WeRead never gates Want-to-Read capture.
         async def sync_douban(mention):
             try:
                 resolution = await asyncio.to_thread(service.resolve, request_from_text(mention.title))
                 candidate = _pick_douban_candidate(resolution, mention.title)
+
+                # Some sources include a subtitle in the captured title while
+                # Douban stores that subtitle separately. Only after the full
+                # title fails do one conservative `主标题：副标题` fallback.
+                if candidate is None:
+                    main_title = _main_title(mention.title)
+                    if main_title:
+                        fallback_resolution = await asyncio.to_thread(
+                            service.resolve,
+                            request_from_text(main_title),
+                        )
+                        candidate = _pick_douban_candidate(fallback_resolution, main_title)
+
                 if candidate is None:
                     return _DoubanBatchOutcome(mention.title, "unresolved", "没有安全匹配到豆瓣版本")
                 subject_id = str(candidate.douban_id or "").strip()
@@ -250,7 +274,6 @@ def prepare_hybrid_batch_douban() -> None:
 
         douban_outcomes = list(await asyncio.gather(*(sync_douban(mention) for mention in mentions)))
 
-        # 2) Then find the reading route in WeRead.
         weread_results = await v11._lookup_mentions(mentions, weread_lookup)
         for mention, result, error in weread_results:
             if error is not None or result is None:
