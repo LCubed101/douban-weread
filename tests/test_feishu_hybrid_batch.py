@@ -74,6 +74,25 @@ class HybridBatchSelectionTest(unittest.TestCase):
         self.assertIsNone(_main_title("如何改变世界"))
         self.assertIsNone(_main_title("标题："))
 
+    def test_main_title_search_can_still_match_original_full_title(self) -> None:
+        resolution = SimpleNamespace(
+            kind=BookInboxResolutionKind.MULTIPLE_CANDIDATES,
+            candidates=(
+                Edition(
+                    title="如何改变世界 : 社会企业家与新思想的威力",
+                    publisher="新星出版社",
+                    publish_date="2006-04",
+                    douban_id="123",
+                ),
+                Edition(title="如何改变世界经济", douban_id="456"),
+            ),
+        )
+        picked = _pick_douban_candidate(
+            resolution,
+            "如何改变世界：社会企业家与新思想的威力",
+        )
+        self.assertEqual(picked.douban_id, "123")
+
 
 if __name__ == "__main__":
     unittest.main()
