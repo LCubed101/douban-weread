@@ -246,9 +246,11 @@ def prepare_hybrid_batch_douban() -> None:
                 resolution = await asyncio.to_thread(service.resolve, request_from_text(mention.title))
                 candidate = _pick_douban_candidate(resolution, mention.title)
 
-                # Some sources include a subtitle in the captured title while
-                # Douban stores that subtitle separately. Only after the full
-                # title fails do one conservative `主标题：副标题` fallback.
+                # Retry the search with the main title only, but still compare
+                # returned candidates against the original full title first.
+                # Douban often returns `主标题 : 副标题` even for a main-title
+                # search, so comparing only against the short query loses the
+                # exact book we were trying to recover.
                 if candidate is None:
                     main_title = _main_title(mention.title)
                     if main_title:
@@ -256,7 +258,9 @@ def prepare_hybrid_batch_douban() -> None:
                             service.resolve,
                             request_from_text(main_title),
                         )
-                        candidate = _pick_douban_candidate(fallback_resolution, main_title)
+                        candidate = _pick_douban_candidate(fallback_resolution, mention.title)
+                        if candidate is None:
+                            candidate = _pick_douban_candidate(fallback_resolution, main_title)
 
                 if candidate is None:
                     return _DoubanBatchOutcome(mention.title, "unresolved", "没有安全匹配到豆瓣版本")
