@@ -7,6 +7,8 @@ from .interest import (
     DoubanWriteVerificationError,
     InterestMutationResult,
 )
+from .movie import DoubanMovieCandidate, DoubanMovieSearchClient
+from .movie_interest import DoubanMovieInterestClient
 from .search import DoubanBookSearchClient, DoubanProviderError
 
 __all__ = [
@@ -16,6 +18,9 @@ __all__ = [
     "DoubanBookInterestClient",
     "DoubanBookSearchClient",
     "DoubanConfirmationRequired",
+    "DoubanMovieCandidate",
+    "DoubanMovieInterestClient",
+    "DoubanMovieSearchClient",
     "DoubanProviderError",
     "DoubanWriteVerificationError",
     "HistoryEntry",
