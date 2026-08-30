@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 
 from douban_weread import feishu_bot as base
+from douban_weread.feishu_bot_context import _callback_card
 from douban_weread.feishu_multi_image import mentions_from_message
 from douban_weread.inbox import BookInboxResolutionKind, BookInboxService, request_from_text
 from douban_weread.movie_router import DoubanMovieResolver, MovieResolveKind
@@ -337,12 +338,12 @@ class FeishuMovieRouter:
                 await self._write(result.selected.douban_id)
                 return {
                     "toast": {"type": "success", "content": "已加入豆瓣想看。"},
-                    "card": _movie_result_card(result.selected.title),
+                    "card": _callback_card(_movie_result_card(result.selected.title)),
                 }
             if result.kind is MovieResolveKind.AMBIGUOUS:
                 return {
                     "toast": {"type": "info", "content": "请选择具体影视版本。"},
-                    "card": _ambiguous_movie_card(title, result.candidates),
+                    "card": _callback_card(_ambiguous_movie_card(title, result.candidates)),
                 }
             return {"toast": {"type": "warning", "content": "没有安全匹配到影视条目，未修改豆瓣。"}}
 
@@ -355,7 +356,7 @@ class FeishuMovieRouter:
                 return {"toast": {"type": "warning", "content": "没有安全匹配到豆瓣图书版本，未修改豆瓣。"}}
             return {
                 "toast": {"type": "info", "content": "请选择具体图书版本。"},
-                "card": _book_edition_card(title, candidates),
+                "card": _callback_card(_book_edition_card(title, candidates)),
             }
 
         if action != "confirm_movie":
@@ -368,5 +369,5 @@ class FeishuMovieRouter:
         await self._write(subject_id)
         return {
             "toast": {"type": "success", "content": "已加入豆瓣想看。"},
-            "card": _movie_result_card(title or "这部影视"),
+            "card": _callback_card(_movie_result_card(title or "这部影视")),
         }
