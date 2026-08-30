@@ -193,8 +193,11 @@ class FeishuMovieRouterTests(unittest.IsolatedAsyncioTestCase):
         finally:
             base._card_action_value = original
 
-        self.assertEqual(result["card"]["header"]["title"]["content"], "选择豆瓣图书版本")
-        version_actions = [e for e in result["card"]["elements"] if e.get("tag") == "action"]
+        callback_card = result["card"]
+        self.assertEqual(callback_card["type"], "raw")
+        card = callback_card["data"]
+        self.assertEqual(card["header"]["title"]["content"], "选择豆瓣图书版本")
+        version_actions = [e for e in card["elements"] if e.get("tag") == "action"]
         self.assertEqual(len(version_actions), 2)
         self.assertTrue(all(e["actions"][0]["value"]["action"] == "confirm_wish" for e in version_actions))
 
@@ -217,6 +220,7 @@ class FeishuMovieRouterTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(interest.writes, [("35426925", True)])
         self.assertEqual(result["toast"]["type"], "success")
+        self.assertEqual(result["card"]["type"], "raw")
 
 
 if __name__ == "__main__":
