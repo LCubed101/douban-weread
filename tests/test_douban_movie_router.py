@@ -67,14 +67,59 @@ class DoubanMovieSearchParsingTests(unittest.TestCase):
         """
         item = DoubanMovieSearchClient._parse_subject_page(
             html,
-            subject_id="36151692",
-            subject_url="https://movie.douban.com/subject/36151692/",
+            subject_id="35426925",
+            subject_url="https://movie.douban.com/subject/35426925/",
         )
         self.assertIsNotNone(item)
         self.assertEqual(item.title, "机器人之梦")
         self.assertEqual(item.year, "2023")
         self.assertEqual(item.media_type, "movie")
         self.assertIn("Robot Dreams", item.aliases)
+
+    def test_subject_suggest_discovers_movie_before_search_fallback(self):
+        calls = []
+        subject_html = """
+        <span property="v:itemreviewed">机器人之梦</span><span class="year">(2023)</span>
+        <div id="info">导演: 巴勃罗·贝格尔<br/>上映日期: 2023-05-20<br/></div>
+        """
+
+        def transport(url, headers):
+            calls.append(url)
+            if "/j/subject_suggest?" in url:
+                return SimpleNamespace(status=200, body='[{"id":"35426925","title":"机器人之梦"}]')
+            if "/subject/35426925/" in url:
+                return SimpleNamespace(status=200, body=subject_html)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        client = DoubanMovieSearchClient(transport=transport)
+        items = client.search_by_title("机器人之梦")
+
+        self.assertEqual([item.douban_id for item in items], ["35426925"])
+        self.assertTrue(any("movie.douban.com/j/subject_suggest" in url for url in calls))
+        self.assertFalse(any("search.douban.com/movie/subject_search" in url for url in calls))
+
+    def test_empty_suggest_falls_back_to_search_douban_movie_host(self):
+        calls = []
+        subject_html = """
+        <span property="v:itemreviewed">机器人之梦</span><span class="year">(2023)</span>
+        <div id="info">导演: 巴勃罗·贝格尔<br/>上映日期: 2023-05-20<br/></div>
+        """
+
+        def transport(url, headers):
+            calls.append(url)
+            if "/j/subject_suggest?" in url:
+                return SimpleNamespace(status=200, body="[]")
+            if "search.douban.com/movie/subject_search" in url:
+                return SimpleNamespace(status=200, body='<a href="https://movie.douban.com/subject/35426925/">结果</a>')
+            if "/subject/35426925/" in url:
+                return SimpleNamespace(status=200, body=subject_html)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        client = DoubanMovieSearchClient(transport=transport)
+        items = client.search_by_title("机器人之梦")
+
+        self.assertEqual([item.douban_id for item in items], ["35426925"])
+        self.assertTrue(any("search.douban.com/movie/subject_search" in url for url in calls))
 
 
 class DoubanMovieInterestTests(unittest.TestCase):
