@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from html import unescape
@@ -12,6 +13,7 @@ from urllib.request import Request, urlopen
 from .search import DEFAULT_USER_AGENT, DoubanProviderError
 
 DEFAULT_MOVIE_BASE_URL = "https://movie.douban.com"
+DEFAULT_MOVIE_SEARCH_BASE_URL = "https://search.douban.com/movie"
 _SUBJECT_ID_RE = re.compile(r"(?:https?://movie\.douban\.com)?/subject/(?P<id>\d+)/?", re.IGNORECASE)
 _SUBJECT_ID_ONLY_RE = re.compile(r"^\d+$")
 _TITLE_RE = re.compile(
@@ -85,17 +87,26 @@ class _InfoParser(HTMLParser):
 
 
 class DoubanMovieSearchClient:
-    """Read-only adapter for movie.douban.com title search and subject pages."""
+    """Read-only adapter for Douban Movie title search and subject pages.
+
+    Movie subject pages live on ``movie.douban.com``. Title discovery is a
+    separate boundary: first use the Movie subject-suggest endpoint, then fall
+    back to ``search.douban.com/movie/subject_search``. This keeps the resolver
+    independent from the Book search host and avoids the broken
+    ``movie.douban.com/subject_search`` path.
+    """
 
     def __init__(
         self,
         *,
         base_url: str = DEFAULT_MOVIE_BASE_URL,
+        search_base_url: str = DEFAULT_MOVIE_SEARCH_BASE_URL,
         timeout: float = 10.0,
         user_agent: str = DEFAULT_USER_AGENT,
         transport: Transport | None = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
+        self.search_base_url = search_base_url.rstrip("/")
         self.timeout = timeout
         self.user_agent = user_agent
         self._transport = transport or self._default_transport
@@ -121,12 +132,38 @@ class DoubanMovieSearchClient:
         return self._parse_subject_page(self._get_text(url), subject_id=subject, subject_url=url)
 
     def _search_subject_ids(self, query: str, *, limit: int) -> list[str]:
-        # Douban subject_search category 1002 is Movie/TV.
+        suggested = self._suggest_subject_ids(query, limit=limit)
+        if suggested:
+            return suggested
+
         params = urlencode({"search_text": query, "cat": "1002"})
-        html = self._get_text(f"{self.base_url}/subject_search?{params}")
+        html = self._get_text(f"{self.search_base_url}/subject_search?{params}")
         ids: list[str] = []
         for match in _SUBJECT_ID_RE.finditer(html):
             subject_id = match.group("id")
+            if subject_id not in ids:
+                ids.append(subject_id)
+            if len(ids) >= limit:
+                break
+        return ids
+
+    def _suggest_subject_ids(self, query: str, *, limit: int) -> list[str]:
+        params = urlencode({"q": query})
+        raw = self._get_text(f"{self.base_url}/j/subject_suggest?{params}")
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+        if not isinstance(payload, list):
+            return []
+
+        ids: list[str] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            subject_id = str(item.get("id") or "").strip()
+            if not _SUBJECT_ID_ONLY_RE.fullmatch(subject_id):
+                continue
             if subject_id not in ids:
                 ids.append(subject_id)
             if len(ids) >= limit:
@@ -138,7 +175,7 @@ class DoubanMovieSearchClient:
             url,
             {
                 "User-Agent": self.user_agent,
-                "Accept": "text/html,application/xhtml+xml",
+                "Accept": "text/html,application/xhtml+xml,application/json",
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             },
         )
