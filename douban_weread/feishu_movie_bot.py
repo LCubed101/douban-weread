@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 from douban_weread import feishu_bot as base
 from douban_weread.adapters.local_ocr import LocalImageOcr
 from douban_weread.feishu_bot_v11 import build_bot as build_book_bot
@@ -15,7 +17,16 @@ class _MovieAwareRawChannel:
     def on(self, event: str, handler):
         if event == "message":
             async def wrapped_message(message):
-                if await self._router.try_handle_message(self, message, self._recognizer):
+                try:
+                    if await self._router.try_handle_message(self, message, self._recognizer):
+                        return None
+                except Exception as exc:
+                    print(f"Feishu Movie Router message error: {type(exc).__name__}", file=sys.stderr)
+                    await self.send(
+                        message.chat_id,
+                        {"text": "影视处理暂时失败，豆瓣状态没有继续修改。请稍后再试。"},
+                        {"reply_to": message.message_id},
+                    )
                     return None
                 return await handler(message)
 
@@ -23,7 +34,11 @@ class _MovieAwareRawChannel:
 
         if event == "cardAction":
             async def wrapped_card_action(action_event):
-                result = await self._router.handle_card_action(action_event)
+                try:
+                    result = await self._router.handle_card_action(action_event)
+                except Exception as exc:
+                    print(f"Feishu Movie Router card error: {type(exc).__name__}", file=sys.stderr)
+                    return {"toast": {"type": "error", "content": "影视想看操作没有执行，请稍后再试。"}}
                 if result is not None:
                     return result
                 return await handler(action_event)
