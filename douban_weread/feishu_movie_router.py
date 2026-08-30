@@ -111,7 +111,7 @@ class FeishuMovieRouter:
         return await asyncio.to_thread(self.interest.mark_want_to_watch, subject_id, confirmed=True)
 
     async def try_handle_message(self, channel: base.ChannelLike, message: base.InboundMessageLike, recognizer) -> bool:
-        if message.raw_content_type in {"text", "post", ""}:
+        if message.raw_content_type in {"text", ""}:
             raw = " ".join(message.content_text.split()).strip()
             if not raw:
                 return False
@@ -153,7 +153,7 @@ class FeishuMovieRouter:
             )
             return True
 
-        if message.raw_content_type == "image" or message.raw_content_type == "post":
+        if message.raw_content_type in {"image", "post"}:
             mentions = await mentions_from_message(channel, message, recognizer)
             if not mentions:
                 return False
