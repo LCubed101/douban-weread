@@ -6,11 +6,11 @@ import os
 import sys
 
 from douban_weread.feishu_bot import ChannelLike
-from douban_weread.feishu_bot_v11 import build_bot
 from douban_weread.feishu_bot_weread_only import build_weread_only_bot
 from douban_weread.feishu_capture_buffer import buffered_channel_factory
 from douban_weread.feishu_compact_douban import prepare_compact_douban_flow
 from douban_weread.feishu_hybrid_batch import prepare_hybrid_batch_douban
+from douban_weread.feishu_movie_bot import build_movie_aware_bot
 from douban_weread.feishu_multi_image import prepare_multi_image_support
 from douban_weread.feishu_result_polish import prepare_result_polish
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
@@ -89,7 +89,7 @@ def main() -> None:
         channel = (
             build_weread_only_bot(channel_factory=channel_factory)
             if mode == "weread_only"
-            else build_bot(channel_factory=channel_factory)
+            else build_movie_aware_bot(channel_factory=channel_factory)
         )
         interval = watch_interval_seconds()
         worker = WeReadWatchWorker()
@@ -109,8 +109,8 @@ def main() -> None:
         )
     else:
         print(
-            "Hybrid mode enabled. Multi-book captures query WeRead and conservatively sync Douban Want-to-Read when "
-            "one Douban edition can be resolved safely; ambiguous editions stay pending instead of being guessed."
+            "Hybrid mode enabled. Books route to Douban Want-to-Read + WeRead; uniquely resolved Film/TV titles route "
+            "to Douban Want-to-Watch. Same-name Book/Movie cases fail closed and require an explicit movie prefix."
         )
     print(f"WeRead availability watch enabled: checking every {interval:g} seconds (default: 604800 / 7d).")
     try:
