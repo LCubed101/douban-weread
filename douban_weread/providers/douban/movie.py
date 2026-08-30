@@ -87,13 +87,14 @@ class _InfoParser(HTMLParser):
 
 
 class DoubanMovieSearchClient:
-    """Read-only adapter for Douban Movie title search and subject pages.
+    """Read-only adapter for Douban Movie title discovery and subject pages.
 
-    Movie subject pages live on ``movie.douban.com``. Title discovery is a
-    separate boundary: first use the Movie subject-suggest endpoint, then fall
-    back to ``search.douban.com/movie/subject_search``. This keeps the resolver
-    independent from the Book search host and avoids the broken
-    ``movie.douban.com/subject_search`` path.
+    The lightweight ``/j/subject_suggest`` response already contains stable
+    subject identity plus title/year metadata. Prefer those candidates directly
+    instead of immediately refetching every subject page: live Douban may return
+    a verification/anti-abuse HTML page for a detail request even when the
+    suggest endpoint itself succeeds. Subject-page parsing remains available for
+    fallback search results and explicit subject lookup.
     """
 
     def __init__(
@@ -116,7 +117,12 @@ class DoubanMovieSearchClient:
         if not query:
             return []
         limit = max(1, min(count, 20))
-        ids = self._search_subject_ids(query, limit=limit)
+
+        suggested = self._suggest_candidates(query, limit=limit)
+        if suggested:
+            return suggested
+
+        ids = self._fallback_search_subject_ids(query, limit=limit)
         result: list[DoubanMovieCandidate] = []
         for subject_id in ids:
             item = self.get_by_subject_id(subject_id)
@@ -132,22 +138,13 @@ class DoubanMovieSearchClient:
         return self._parse_subject_page(self._get_text(url), subject_id=subject, subject_url=url)
 
     def _search_subject_ids(self, query: str, *, limit: int) -> list[str]:
+        """Compatibility/debug helper returning discovery ids without detail fetches."""
         suggested = self._suggest_subject_ids(query, limit=limit)
         if suggested:
             return suggested
+        return self._fallback_search_subject_ids(query, limit=limit)
 
-        params = urlencode({"search_text": query, "cat": "1002"})
-        html = self._get_text(f"{self.search_base_url}/subject_search?{params}")
-        ids: list[str] = []
-        for match in _SUBJECT_ID_RE.finditer(html):
-            subject_id = match.group("id")
-            if subject_id not in ids:
-                ids.append(subject_id)
-            if len(ids) >= limit:
-                break
-        return ids
-
-    def _suggest_subject_ids(self, query: str, *, limit: int) -> list[str]:
+    def _suggest_payload(self, query: str) -> list[dict[str, object]]:
         params = urlencode({"q": query})
         raw = self._get_text(f"{self.base_url}/j/subject_suggest?{params}")
         try:
@@ -156,14 +153,64 @@ class DoubanMovieSearchClient:
             return []
         if not isinstance(payload, list):
             return []
+        return [item for item in payload if isinstance(item, dict)]
 
+    def _suggest_subject_ids(self, query: str, *, limit: int) -> list[str]:
         ids: list[str] = []
-        for item in payload:
-            if not isinstance(item, dict):
-                continue
+        for item in self._suggest_payload(query):
             subject_id = str(item.get("id") or "").strip()
             if not _SUBJECT_ID_ONLY_RE.fullmatch(subject_id):
                 continue
+            if subject_id not in ids:
+                ids.append(subject_id)
+            if len(ids) >= limit:
+                break
+        return ids
+
+    def _suggest_candidates(self, query: str, *, limit: int) -> list[DoubanMovieCandidate]:
+        candidates: list[DoubanMovieCandidate] = []
+        for item in self._suggest_payload(query):
+            subject_id = str(item.get("id") or "").strip()
+            title = self._clean(str(item.get("title") or ""))
+            if not _SUBJECT_ID_ONLY_RE.fullmatch(subject_id) or not title:
+                continue
+
+            year_value = self._clean(str(item.get("year") or "")) or None
+            type_value = self._clean(str(item.get("type") or "")) or None
+            sub_title = self._clean(str(item.get("sub_title") or ""))
+            aliases = (sub_title,) if sub_title and sub_title != title else ()
+
+            url_value = self._clean(str(item.get("url") or ""))
+            url_match = _SUBJECT_ID_RE.search(url_value)
+            subject_url = (
+                f"{self.base_url}/subject/{url_match.group('id')}/"
+                if url_match
+                else f"{self.base_url}/subject/{subject_id}/"
+            )
+
+            candidates.append(
+                DoubanMovieCandidate(
+                    douban_id=subject_id,
+                    title=title,
+                    year=year_value,
+                    media_type=type_value,
+                    directors=(),
+                    actors=(),
+                    genres=(),
+                    aliases=aliases,
+                    subject_url=subject_url,
+                )
+            )
+            if len(candidates) >= limit:
+                break
+        return candidates
+
+    def _fallback_search_subject_ids(self, query: str, *, limit: int) -> list[str]:
+        params = urlencode({"search_text": query, "cat": "1002"})
+        html = self._get_text(f"{self.search_base_url}/subject_search?{params}")
+        ids: list[str] = []
+        for match in _SUBJECT_ID_RE.finditer(html):
+            subject_id = match.group("id")
             if subject_id not in ids:
                 ids.append(subject_id)
             if len(ids) >= limit:
