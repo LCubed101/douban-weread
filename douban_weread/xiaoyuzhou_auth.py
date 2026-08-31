@@ -4,13 +4,13 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 API_BASE = "https://api.xiaoyuzhoufm.com"
 REFRESH_PATH = "/app_auth_tokens.refresh"
 APP_USER_AGENT = "Xiaoyuzhou/2.7.0 (build:1234; iOS 17.0.0)"
+DEFAULT_DEVICE_ID = "00000000-0000-0000-0000-000000000000"
 DEFAULT_REFRESH_TOKEN_FILE = Path.home() / ".config" / "douban-weread" / "xiaoyuzhou_refresh_token"
 
 
@@ -38,10 +38,9 @@ def refresh_access_token(
         "User-Agent": APP_USER_AGENT,
         "Content-Type": "application/json",
         "x-jike-app-version": "2.7.0",
+        "x-jike-device-id": (device_id or DEFAULT_DEVICE_ID).strip(),
         "x-jike-refresh-token": token,
     }
-    if device_id:
-        headers["x-jike-device-id"] = device_id.strip()
 
     request = Request(f"{API_BASE}{REFRESH_PATH}", data=b"", headers=headers, method="POST")
     try:
