@@ -19,12 +19,12 @@ class FakeMovieSearch:
         return list(self.items)
 
 
-def movie(movie_id: str, title: str, *, year: str = "2024", aliases=()):
+def movie(movie_id: str, title: str, *, year: str = "2024", aliases=(), media_type="movie"):
     return DoubanMovieCandidate(
         douban_id=movie_id,
         title=title,
         year=year,
-        media_type="movie",
+        media_type=media_type,
         directors=(),
         actors=(),
         genres=(),
@@ -50,6 +50,28 @@ class DoubanMovieResolverTests(unittest.TestCase):
         result = resolver.resolve("三体")
         self.assertEqual(result.kind, MovieResolveKind.AMBIGUOUS)
         self.assertEqual(len(result.candidates), 2)
+
+    def test_bare_tv_series_title_returns_seasons_as_ambiguous(self):
+        resolver = DoubanMovieResolver(
+            FakeMovieSearch(
+                [
+                    movie("1", "流人 第一季", year="2022", media_type="tv"),
+                    movie("2", "流人 第二季", year="2022", media_type="tv"),
+                    movie("3", "流人 第三季", year="2023", media_type="tv"),
+                ]
+            )
+        )
+        result = resolver.resolve("流人")
+        self.assertEqual(result.kind, MovieResolveKind.AMBIGUOUS)
+        self.assertIsNone(result.selected)
+        self.assertEqual([item.title for item in result.candidates], ["流人 第一季", "流人 第二季", "流人 第三季"])
+
+    def test_unrelated_prefix_result_still_fails_closed(self):
+        resolver = DoubanMovieResolver(
+            FakeMovieSearch([movie("1", "流人之歌", year="2024", media_type="movie")])
+        )
+        result = resolver.resolve("流人")
+        self.assertEqual(result.kind, MovieResolveKind.NOT_FOUND)
 
 
 class DoubanMovieSearchParsingTests(unittest.TestCase):
