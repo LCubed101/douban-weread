@@ -1,52 +1,57 @@
-# Product Direction — Reading Inbox / Reading Router
+# Product Direction — Recommendation Router
 
 ## One-line definition
 
-把任何地方偶然遇到的书，低摩擦地送进用户自己的阅读系统。
+把别人推荐给我的东西，低摩擦地送进我真正使用的平台。
 
 > Don't replace your system. Connect it.
 
-This project is not trying to become a universal knowledge base or a new reading app. It should identify books from messy real-world inputs, confirm what they are, and route them into the tools each person already uses.
+The product is not trying to become another universal knowledge base, reading app, media tracker, or note-taking system. It should accept messy real-world recommendations, identify the object, ask only when identity is uncertain, and route it into the destination the user already trusts.
 
-## Why this direction
+## Core user job
 
-The original personal workflow was:
+The common problem is not a lack of recommendations. It is that recommendations arrive everywhere and are easy to lose:
 
 ```text
-Social / screenshot / recommendation
-        ↓
-Identify the book
-        ↓
-Confirm the Douban edition
-        ↓
-Record it on Douban
-        ↓
-Find a readable WeRead edition
-        ↓
-Read
+Social media / group chat / friend / screenshot / article
+                         ↓
+                    recommendation
+                         ↓
+                "I want this later"
+                         ↓
+        screenshot / favorite / send to self / forget
 ```
 
-Feedback from real users broadened the input without changing the core job:
+The product job is:
 
-- Some people do not use Douban at all; they only want the book to reach WeRead.
-- Some inputs are not book titles but long AI-generated or note-generated text containing multiple books.
-- Some people want to paste arbitrary text or screenshots and have the system extract the books for them.
-- Different people already have different reading and knowledge systems, so the router should not force a single destination.
+> I encountered something I may want later. Help me identify it and send it to the right place without asking me to maintain another collection system.
 
-The common problem is therefore not “sync Douban and WeRead.” It is:
+## First C-end ICP
 
-> I encountered something that contains books. Help me identify the books and send them into my own reading workflow.
+**Ideal Customer Profile (ICP):**
+
+> 已经在使用豆瓣 / 微信读书 / 小宇宙等内容平台，经常从微信、社交媒体和朋友聊天里收到书影音推荐，但不想再维护一个新的收藏工具的人。
+
+Typical traits:
+
+- regularly receives book / film / TV / podcast recommendations
+- already has trusted destination apps
+- recommendations are scattered across screenshots, chats, social feeds and saved messages
+- the pain is fragmentation and forgotten intent, not insufficient content supply
+- values low-friction capture more than another dashboard or recommendation feed
+
+The first product validation target is intentionally narrow. Do not optimize for “everyone who likes content” yet.
 
 ## Product model
 
-The prototype should be organized around four stages:
+The product should be organized around four stages:
 
 ```text
 Capture
   ↓
-Understand
+Understand / Identify
   ↓
-Confirm
+Confirm only when needed
   ↓
 Route
 ```
@@ -55,170 +60,186 @@ Route
 
 Inputs may include:
 
-- plain book title
-- ISBN
-- Douban link
-- long pasted text
-- AI-generated recommendation list
-- screenshot
-- book cover / copyright page / barcode page
-- later: share sheet / shortcut / web input
+- plain text
+- screenshot / image
+- copied recommendation list
+- link
+- forwarded chat / social content
+- later: Share Sheet, browser extension, shortcut, lightweight web input
 
-Feishu is currently one interface for Capture. It is not the product boundary.
+Feishu Bot is currently a Capture adapter. It is not the product boundary or the final knowledge store.
 
-### 2. Understand
+### 2. Understand / Identify
 
-Convert raw input into books:
+Convert messy input into explicit objects:
 
 ```text
 Text / Image / URL
        ↓
-Unified text
+Unified input
        ↓
-Book Mention Extractor
+Mention / entity extraction
        ↓
-Book candidates / Works
+Book / Film / TV / Podcast candidates
 ```
 
-OCR is only an adapter for image input. It should not be the center of the product.
-
-For V1.1, extraction should be text-first and deterministic where possible:
-
-- 《书名》
-- 「书名」
-- numbered lists
-- bullet lists
-- common recommendation patterns
-- de-duplication
-
-LLM extraction should be considered only after enough real samples show that deterministic extraction is insufficient.
+Prefer deterministic parsing and platform metadata where possible. OCR is an adapter for image input, not the center of the product.
 
 ### 3. Confirm
 
-The system should fail closed when identity is uncertain.
+The product should fail closed when identity is uncertain.
 
-The core identity is the Work, while Edition is platform-specific:
+Principle:
+
+> Low friction does not mean zero confirmation.
+
+Desired interaction:
 
 ```text
-             Work
-              │
-       ┌──────┴──────┐
-       ↓             ↓
-Douban Edition   WeRead Edition
-   record            read
+看到
+ ↓
+识别
+ ↓
+必要时选一次
+ ↓
+完成
 ```
 
-A Douban edition and a WeRead edition may legitimately differ while still representing the same Work.
-
-Matching priority:
-
-1. same ISBN
-2. same edition by title / author / translator / publisher / date
-3. same Work, different Edition
-4. uncertain same Work → ask the user or fail closed
+A wrong automatic route damages trust more than one lightweight confirmation. Ambiguous editions, same-title books/films, TV seasons, and similar entities should use direct choices rather than guessing.
 
 ### 4. Route
 
-Routing should be user-specific rather than hard-coded:
+Current / intended destination model:
 
 ```text
-Book detected
-    ↓
-Choose route
- ┌───────────────┬──────────────────┐
- ↓               ↓
-WeRead only   Douban + WeRead
+📚 Book
+   → 豆瓣想读（record）
+   → 微信读书可读链接（read）
+
+🎬 Film / TV / Documentary
+   → 豆瓣想看
+
+🎧 Podcast episode
+   → 小宇宙 episode URL
+   → currently exploration / validation, not yet a shipped user feature
 ```
 
-Future destinations may include other reading tools, but the prototype should stay focused on books.
+The destination owns the long-term state. The router should not create a duplicate library unless a future use case proves it is necessary.
+
+## Knowledge / note boundary
+
+Pure thoughts, quotations and ideas are not the same product object as books, films or podcast episodes.
+
+```text
+有明确对象的推荐
+→ Recommendation Router
+
+纯观点 / 摘抄 / 灵感
+→ flomo or the user's existing note tool
+```
+
+Feishu should not become a second copy of flomo. The product should connect existing systems rather than duplicate them.
+
+## What the product competes with
+
+The practical alternatives are not primarily Douban, WeRead or Xiaoyuzhou. They are:
+
+- screenshot and forget
+- WeChat Favorites
+- send to self
+- browser bookmarks
+- Notes
+- flomo / other capture tools
+- “I will remember this later”
+
+The product therefore wins by reducing cognitive and operational friction:
+
+> 比“先截图以后再说”更省脑子。
 
 ## Current product boundary
 
-### In scope
+### Shipped / usable direction
 
-- Books only
-- Text / ISBN / Douban URL / image input
-- Identify one or more books
-- Work / Edition confirmation
+- Books from text / ISBN / screenshot
+- Multiple books from long text / images
 - Douban Want-to-Read route
-- WeRead readable-edition route
-- Preserve existing reading history
-- Self-hosted, user-owned credentials
+- WeRead availability / readable-edition route
+- Film / TV / Documentary → Douban Want-to-Watch
+- Same-title Book / Movie disambiguation
+- TV season-family disambiguation
+- Mixed Book + Movie routing for safe cases
+- Feishu as the current Capture adapter
 
-### Not in scope yet
+### Exploration, not yet shipped as a C-end feature
 
-- Generic Knowledge Inbox
-- Notes / highlights / reading-progress management
-- Knowledge graph
-- Vector database / embeddings as a product requirement
-- Automatic summarization of books
-- Movies / TV / podcasts / articles as first-class routed objects
-- Replacing flomo, Obsidian, Notion, Douban, WeRead, etc.
+- Podcast Episode Router → Xiaoyuzhou
+- Public Xiaoyuzhou episode matching without user credentials
+- Share Sheet / browser extension / additional Capture adapters
 
-## Relationship to a Personal Context System
+### Explicitly not the goal
 
-Reading Inbox is a vertical prototype of a broader idea:
+- universal knowledge base
+- replacing flomo / Obsidian / Notion
+- replacing Douban / WeRead / Xiaoyuzhou
+- AI recommendation feed
+- generic “save everything” app
+- knowledge graph as a product requirement
+- asking ordinary users to capture private app tokens or install HTTPS debugging proxies
 
-```text
-Personal Context System
-        │
-        ├── Reading Inbox → Books
-        ├── Idea Inbox    → notes / thoughts
-        ├── Project Context → repos / docs
-        └── other object routers later
-```
+## C-end validation
 
-The broader principle is:
+The next milestone is not “support more entity types.” It is proving that **Capture → Route becomes a repeated habit**.
 
-> Do not require all information to live in one place. Preserve enough identity and context so it can reach the right existing system and be recalled later.
+### North Star
 
-The project should not expand into that broader system until the Reading Inbox has been validated through real use.
+**Weekly Routed Items per Active User**
+
+Count items that successfully reach the intended destination, not merely messages received by the bot.
+
+### Supporting metrics
+
+**Activation**
+
+> A new user successfully routes one object within the first session.
+
+**D7 Repeat Capture**
+
+> After the first successful route, does the user voluntarily come back and capture another recommendation within 7 days?
+
+**Wrong Route Rate**
+
+> Incorrect automatic routing should remain as close to zero as possible. Prefer `AMBIGUOUS` / confirmation over a confident wrong route.
+
+### First validation cohort
+
+Before expanding further:
+
+- recruit 10–20 target users
+- observe 1–2 weeks of real use
+- collect 100–300 real Capture events
+- record source, object type, success / confirmation / failure, and whether users return without prompting
+
+The strongest early signal is not MAU. It is:
+
+> A user chooses to send a second recommendation to the product without being reminded.
 
 ## Product principles
 
 - Don't replace the user's existing system. Connect it.
-- Books are the current vertical; resist premature generic expansion.
-- Work is the core identity; Edition is platform-specific.
-- Text first; OCR is fallback.
-- Prefer deterministic extraction before adding LLM cost and complexity.
+- The router is an intake / routing layer, not the final destination.
+- Recommendations are abundant; the problem is attention and fragmentation.
+- Do not add an AI recommendation feed before routing behavior is validated.
+- Prefer one lightweight confirmation over a wrong automatic route.
 - Preserve user judgment for meaningful decisions.
 - Fail closed when identity is uncertain.
-- Keep routing optional: Douban is one route, not a mandatory step.
-- Every added feature should be justified by a real captured use case.
+- Keep destinations user-specific rather than hard-coded as a single workflow.
+- Ordinary C-end users should not need developer credentials, tokens, Charles, or manual API setup.
+- Every added entity type or Capture adapter should be justified by real user behavior.
 
-## V1.1 target
+## Product thesis
 
-The next prototype milestone is:
+> You already have enough recommendations. We help them reach the right place.
 
-> **Any text / image → Books → WeRead**, while retaining **Douban + WeRead** as an optional personal route.
+Or, in Chinese:
 
-Acceptance criteria:
-
-1. Feishu accepts a long block of text.
-2. The system extracts multiple explicit book mentions from that text.
-3. Image OCR feeds into the same extractor rather than a separate book-search path.
-4. Duplicate mentions are collapsed.
-5. Every extracted book is matched against WeRead.
-6. The user gets a readable WeRead deep link where available.
-7. Douban remains optional rather than mandatory.
-8. No LLM API is required for the first implementation.
-
-## Validation before expanding
-
-Before adding generic knowledge/context features, collect real examples from actual use:
-
-- 5–10 flomo / AI Insight outputs
-- 5–10 social-media or chat snippets containing books
-- 5–10 screenshots where OCR is genuinely necessary
-
-For each sample, record:
-
-- input type
-- whether text was directly copyable
-- how book titles were formatted
-- number of books mentioned
-- extraction errors
-- WeRead matching errors
-- whether the user actually continued to read / save the book
-
-The next architecture decisions should come from these samples rather than from hypothetical feature breadth.
+> 你已经不缺推荐了。我们只负责把它们送到对的地方。
