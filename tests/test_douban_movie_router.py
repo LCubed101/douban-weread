@@ -19,6 +19,16 @@ class FakeMovieSearch:
         return list(self.items)
 
 
+class MappingMovieSearch:
+    def __init__(self, mapping):
+        self.mapping = {key: list(value) for key, value in mapping.items()}
+        self.queries = []
+
+    def search_by_title(self, title: str, *, count: int = 10):
+        self.queries.append((title, count))
+        return list(self.mapping.get(title, ()))
+
+
 def movie(movie_id: str, title: str, *, year: str = "2024", aliases=(), media_type="movie"):
     return DoubanMovieCandidate(
         douban_id=movie_id,
@@ -65,6 +75,57 @@ class DoubanMovieResolverTests(unittest.TestCase):
         self.assertEqual(result.kind, MovieResolveKind.AMBIGUOUS)
         self.assertIsNone(result.selected)
         self.assertEqual([item.title for item in result.candidates], ["流人 第一季", "流人 第二季", "流人 第三季"])
+
+    def test_missing_seasons_are_completed_with_exact_probes_only(self):
+        search = MappingMovieSearch(
+            {
+                "流人": [
+                    movie("1", "流人 第一季", year="2022", media_type="tv"),
+                    movie("2", "流人 第二季", year="2022", media_type="tv"),
+                    movie("5", "流人 第五季", year="2025", media_type="tv"),
+                    movie("6", "流人 第六季", year="2026", media_type="tv"),
+                    movie("8", "流人 第八季", year="2028", media_type="tv"),
+                ],
+                "流人 第3季": [movie("3", "流人 第三季", year="2023", media_type="tv")],
+                "流人 第4季": [movie("4", "流人 第四季", year="2024", media_type="tv")],
+                "流人 第7季": [movie("7", "流人 第七季", year="2027", media_type="tv")],
+            }
+        )
+        resolver = DoubanMovieResolver(search)
+
+        result = resolver.resolve("流人")
+
+        self.assertEqual(result.kind, MovieResolveKind.AMBIGUOUS)
+        self.assertEqual(
+            [item.title for item in result.candidates],
+            [
+                "流人 第一季",
+                "流人 第二季",
+                "流人 第三季",
+                "流人 第四季",
+                "流人 第五季",
+                "流人 第六季",
+                "流人 第七季",
+                "流人 第八季",
+            ],
+        )
+        self.assertEqual(
+            [query for query, _count in search.queries],
+            ["流人", "流人 第3季", "流人 第4季", "流人 第7季"],
+        )
+
+    def test_completion_never_accepts_wrong_exact_season(self):
+        search = MappingMovieSearch(
+            {
+                "流人": [
+                    movie("1", "流人 第一季", media_type="tv"),
+                    movie("3", "流人 第三季", media_type="tv"),
+                ],
+                "流人 第2季": [movie("x", "流人之歌 第二季", media_type="tv")],
+            }
+        )
+        result = DoubanMovieResolver(search).resolve("流人")
+        self.assertEqual([item.title for item in result.candidates], ["流人 第一季", "流人 第三季"])
 
     def test_unrelated_prefix_result_still_fails_closed(self):
         resolver = DoubanMovieResolver(
