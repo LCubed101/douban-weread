@@ -39,14 +39,7 @@ def _normalize_action_value(value: object) -> dict[str, object]:
 
 
 def _normalize_card_action_event(event: object) -> dict[str, object]:
-    """Adapt Channel SDK cardAction shapes to the app's stable snake_case shape.
-
-    lark-channel-sdk exposes normalized card actions, but versions may surface
-    event identity as snake_case or camelCase and action.value may arrive as an
-    object or JSON string. Keep this compatibility adapter at the channel edge
-    so both Movie Router and the existing Book handler receive one predictable
-    shape.
-    """
+    """Adapt Channel SDK cardAction shapes to the app's stable snake_case shape."""
 
     action = _field(event, "action")
     raw_value = _field(action, "value") if action is not None else None
@@ -62,6 +55,27 @@ def _normalize_card_action_event(event: object) -> dict[str, object]:
     }
 
 
+def _callback_raw_card(result: object) -> dict[str, object] | None:
+    """Extract the raw card body from the app's callback result envelope."""
+
+    if not isinstance(result, Mapping):
+        return None
+    card = result.get("card")
+    if not isinstance(card, Mapping):
+        return None
+    if card.get("type") == "raw" and isinstance(card.get("data"), Mapping):
+        return dict(card["data"])
+    if "elements" in card or "header" in card:
+        return dict(card)
+    return None
+
+
+def _toast_only(result: object) -> dict[str, object]:
+    if isinstance(result, Mapping) and isinstance(result.get("toast"), Mapping):
+        return {"toast": dict(result["toast"])}
+    return {"toast": {"type": "info", "content": "已处理。"}}
+
+
 class _MovieAwareRawChannel:
     def __init__(self, inner, router: FeishuMovieRouter, recognizer) -> None:
         self._inner = inner
@@ -75,7 +89,7 @@ class _MovieAwareRawChannel:
                     if await self._router.try_handle_message(self, message, self._recognizer):
                         return None
                 except Exception as exc:
-                    print(f"Feishu Movie Router message error: {type(exc).__name__}", file=sys.stderr)
+                    print(f"Feishu Movie Router message error: {type(exc).__name__}: {exc}", file=sys.stderr)
                     await self.send(
                         message.chat_id,
                         {"text": "影视处理暂时失败，豆瓣状态没有继续修改。请稍后再试。"},
@@ -89,11 +103,8 @@ class _MovieAwareRawChannel:
         if event == "cardAction":
             async def wrapped_card_action(action_event):
                 normalized = _normalize_card_action_event(action_event)
-                action_name = str(
-                    (normalized.get("action") or {}).get("value", {}).get("action")
-                    if isinstance(normalized.get("action"), Mapping)
-                    else ""
-                ).strip()
+                action_value = (normalized.get("action") or {}).get("value", {})
+                action_name = str(action_value.get("action") if isinstance(action_value, Mapping) else "").strip()
                 print(
                     f"Feishu cardAction received: action={action_name or '<empty>'}",
                     file=sys.stderr,
@@ -101,10 +112,33 @@ class _MovieAwareRawChannel:
                 try:
                     result = await self._router.handle_card_action(normalized)
                 except Exception as exc:
-                    print(f"Feishu Movie Router card error: {type(exc).__name__}", file=sys.stderr)
+                    print(f"Feishu Movie Router card error: {type(exc).__name__}: {exc}", file=sys.stderr)
                     return {"toast": {"type": "error", "content": "影视想看操作没有执行，请稍后再试。"}}
+
                 if result is not None:
-                    return result
+                    # Do not depend on Feishu's in-place callback-card replacement for
+                    # Movie Router results. Live testing showed the click reaches us,
+                    # but the callback replacement can fail with OutboundSendError.
+                    # Send the next/final card as a normal bot message instead, then
+                    # keep the callback response to a small toast only.
+                    raw_card = _callback_raw_card(result)
+                    chat_id = str(normalized.get("chat_id") or "").strip()
+                    if raw_card is not None and chat_id:
+                        try:
+                            await self.send(chat_id, {"card": raw_card})
+                        except Exception as exc:
+                            print(
+                                f"Feishu Movie Router result send error: {type(exc).__name__}: {exc}",
+                                file=sys.stderr,
+                            )
+                            return {
+                                "toast": {
+                                    "type": "error",
+                                    "content": "豆瓣操作已处理，但结果卡片发送失败，请查看机器人日志。",
+                                }
+                            }
+                    return _toast_only(result)
+
                 return await handler(normalized)
 
             return self._inner.on(event, wrapped_card_action)
