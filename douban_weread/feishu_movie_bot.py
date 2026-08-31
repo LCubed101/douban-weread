@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from douban_weread import feishu_bot as base
 from douban_weread.adapters.local_ocr import LocalImageOcr
 from douban_weread.feishu_bot_v11 import build_bot as build_book_bot
+from douban_weread.feishu_mixed_router import MixedCaptureRouter
 from douban_weread.feishu_movie_router import FeishuMovieRouter
 
 
@@ -77,22 +78,25 @@ def _toast_only(result: object) -> dict[str, object]:
 
 
 class _MovieAwareRawChannel:
-    def __init__(self, inner, router: FeishuMovieRouter, recognizer) -> None:
+    def __init__(self, inner, router: FeishuMovieRouter, mixed_router: MixedCaptureRouter, recognizer) -> None:
         self._inner = inner
         self._router = router
+        self._mixed_router = mixed_router
         self._recognizer = recognizer
 
     def on(self, event: str, handler):
         if event == "message":
             async def wrapped_message(message):
                 try:
+                    if await self._mixed_router.try_handle_message(self, message, self._recognizer):
+                        return None
                     if await self._router.try_handle_message(self, message, self._recognizer):
                         return None
                 except Exception as exc:
                     print(f"Feishu Movie Router message error: {type(exc).__name__}: {exc}", file=sys.stderr)
                     await self.send(
                         message.chat_id,
-                        {"text": "影视处理暂时失败，豆瓣状态没有继续修改。请稍后再试。"},
+                        {"text": "书籍/影视处理暂时失败，豆瓣状态没有继续修改。请稍后再试。"},
                         {"reply_to": message.message_id},
                     )
                     return None
@@ -117,10 +121,8 @@ class _MovieAwareRawChannel:
 
                 if result is not None:
                     # Do not depend on Feishu's in-place callback-card replacement for
-                    # Movie Router results. Live testing showed the click reaches us,
-                    # but the callback replacement can fail with OutboundSendError.
-                    # Send the next/final card as a normal bot message instead, then
-                    # keep the callback response to a small toast only.
+                    # Movie Router results. Send the next/final card as a normal bot
+                    # message, then keep the callback response to a small toast only.
                     raw_card = _callback_raw_card(result)
                     chat_id = str(normalized.get("chat_id") or "").strip()
                     if raw_card is not None and chat_id:
@@ -169,11 +171,12 @@ def build_movie_aware_bot(
     channel_factory: base.ChannelFactory = base._default_channel_factory,
 ):
     router = FeishuMovieRouter.default()
+    mixed_router = MixedCaptureRouter.default(router)
     recognizer = LocalImageOcr()
 
     def wrapped_factory(app_id: str, app_secret: str):
         raw = channel_factory(app_id, app_secret)
-        return _MovieAwareRawChannel(raw, router, recognizer)
+        return _MovieAwareRawChannel(raw, router, mixed_router, recognizer)
 
     return build_book_bot(
         channel_factory=wrapped_factory,
