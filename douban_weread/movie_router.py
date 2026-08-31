@@ -121,7 +121,7 @@ class DoubanMovieResolver:
     exact matches stay ambiguous. A bare TV franchise query may resolve to an
     ambiguous family of per-season subjects (`流人` -> `流人 第一季`, ...). When
     Douban's first suggestion batch skips seasons, only gaps between season 1 and
-    the highest returned season are probed with exact season-title searches; no
+    the highest returned season are probed with exact season-number searches; no
     season is ever invented or auto-selected.
     """
 
@@ -158,21 +158,21 @@ class DoubanMovieResolver:
                 # Completion is optional. Preserve the safe candidates already
                 # discovered if Douban throttles or rejects an extra probe.
                 continue
-            exact = [
+            exact_season = [
                 item
                 for item in found
-                if _candidate_matches_title(item, target)
-                and _is_series_season_variant(item, query)
+                if _is_series_season_variant(item, query)
                 and _season_number(item, query) == number
             ]
-            if len(exact) != 1:
+            if len(exact_season) != 1:
                 continue
-            item = exact[0]
+            item = exact_season[0]
             by_id.setdefault(item.douban_id, item)
             numbered[number] = item
 
         ordered = [numbered[number] for number in sorted(numbered)]
-        extras = [item for item in by_id.values() if item.douban_id not in {x.douban_id for x in ordered}]
+        ordered_ids = {item.douban_id for item in ordered}
+        extras = [item for item in by_id.values() if item.douban_id not in ordered_ids]
         return tuple((ordered + extras)[: self.limit])
 
     def resolve(self, title: str) -> MovieResolveResult:
