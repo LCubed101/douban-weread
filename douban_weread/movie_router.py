@@ -37,12 +37,43 @@ def _candidate_matches_title(candidate: DoubanMovieCandidate, query: str) -> boo
     return any(_normalize_title(alias) == normalized for alias in candidate.aliases)
 
 
+_SEASON_SUFFIX_RE = re.compile(
+    r"^(?:第[一二三四五六七八九十百\d]+季|season\d+)$",
+    re.IGNORECASE,
+)
+
+
+def _is_series_season_variant(candidate: DoubanMovieCandidate, query: str) -> bool:
+    """Return True only for conservative `<query> + season` title variants.
+
+    Douban stores many TV franchises only as per-season subjects, so a bare
+    series query such as `流人` can legitimately return `流人 第一季`, `流人 第二季`,
+    ... with no exact subject called simply `流人`. Treat those as an ambiguous
+    TV-series family rather than as fuzzy matches, but never auto-select a season.
+    """
+
+    query_norm = _normalize_title(query)
+    if not query_norm:
+        return False
+
+    for raw in (candidate.title, *candidate.aliases):
+        value_norm = _normalize_title(raw)
+        if not value_norm.startswith(query_norm) or value_norm == query_norm:
+            continue
+        suffix = value_norm[len(query_norm) :]
+        if _SEASON_SUFFIX_RE.fullmatch(suffix):
+            return True
+    return False
+
+
 class DoubanMovieResolver:
     """Fail-closed resolver for Movie/TV titles.
 
-    V1.2 intentionally auto-selects only when one exact title/alias match is
-    present. Multiple exact matches (remakes, TV vs film, same-name works) stay
-    ambiguous and must be confirmed by the user later in the Feishu layer.
+    V1.2 auto-selects only when one exact title/alias match is present. Multiple
+    exact matches stay ambiguous. A bare TV franchise query may also resolve to
+    an ambiguous family of per-season subjects (`流人` -> `流人 第一季`, ...); this
+    keeps TV titles in the Movie/TV route without guessing which season the user
+    meant. All unrelated fuzzy matches still fail closed.
     """
 
     def __init__(self, search: MovieSearchLike | None = None, *, limit: int = 10) -> None:
@@ -60,4 +91,9 @@ class DoubanMovieResolver:
             return MovieResolveResult(MovieResolveKind.EXACT, query, exact[0], exact)
         if len(exact) > 1:
             return MovieResolveResult(MovieResolveKind.AMBIGUOUS, query, None, exact)
+
+        seasons = tuple(item for item in candidates if _is_series_season_variant(item, query))
+        if seasons:
+            return MovieResolveResult(MovieResolveKind.AMBIGUOUS, query, None, seasons)
+
         return MovieResolveResult(MovieResolveKind.NOT_FOUND, query, None, candidates)
