@@ -1,21 +1,21 @@
-# Product Direction — Recommendation Router
+# Product Direction — Reading Router
 
 ## One-line definition
 
-把别人推荐给我的东西，低摩擦地送进我真正使用的平台。
+把别人推荐给我的书，低摩擦地送进我真正使用的阅读系统。
 
 > Don't replace your system. Connect it.
 
-The product is not trying to become another universal knowledge base, reading app, media tracker, or note-taking system. It should accept messy real-world recommendations, identify the object, ask only when identity is uncertain, and route it into the destination the user already trusts.
+The main product is intentionally **Book only**. It is not trying to become a universal recommendation router, media tracker, knowledge base, or note-taking app.
 
 ## Core user job
 
-The common problem is not a lack of recommendations. It is that recommendations arrive everywhere and are easy to lose:
+Books are often discovered in fragmented places:
 
 ```text
 Social media / group chat / friend / screenshot / article
                          ↓
-                    recommendation
+                     a book
                          ↓
                 "I want this later"
                          ↓
@@ -24,27 +24,23 @@ Social media / group chat / friend / screenshot / article
 
 The product job is:
 
-> I encountered something I may want later. Help me identify it and send it to the right place without asking me to maintain another collection system.
+> I encountered a book I may want to read. Help me identify it, record the intent, and tell me whether I can read it in the tool I already use.
 
 ## First C-end ICP
 
 **Ideal Customer Profile (ICP):**
 
-> 已经在使用豆瓣 / 微信读书 / 小宇宙等内容平台，经常从微信、社交媒体和朋友聊天里收到书影音推荐，但不想再维护一个新的收藏工具的人。
+> 已经在使用豆瓣和 / 或微信读书，经常从微信、社交媒体、群聊和朋友聊天里收到图书推荐，但不想反复手动搜索、也不想维护一个新的收藏工具的人。
 
 Typical traits:
 
-- regularly receives book / film / TV / podcast recommendations
-- already has trusted destination apps
-- recommendations are scattered across screenshots, chats, social feeds and saved messages
-- the pain is fragmentation and forgotten intent, not insufficient content supply
-- values low-friction capture more than another dashboard or recommendation feed
-
-The first product validation target is intentionally narrow. Do not optimize for “everyone who likes content” yet.
+- regularly receives book recommendations
+- already uses Douban, WeRead, or both
+- recommendations are scattered across screenshots, chats and social feeds
+- the pain is fragmentation and repeated searching, not insufficient recommendations
+- wants low-friction capture without another dashboard
 
 ## Product model
-
-The product should be organized around four stages:
 
 ```text
 Capture
@@ -58,29 +54,18 @@ Route
 
 ### 1. Capture
 
-Inputs may include:
-
-- plain text
-- screenshot / image
-- copied recommendation list
-- link
-- forwarded chat / social content
-- later: Share Sheet, browser extension, shortcut, lightweight web input
-
-Feishu Bot is currently a Capture adapter. It is not the product boundary or the final knowledge store.
+Inputs may include plain text, ISBN, screenshot / image, copied book lists, links and forwarded social content. Feishu Bot is currently a Capture adapter, not the product boundary or the final knowledge store.
 
 ### 2. Understand / Identify
-
-Convert messy input into explicit objects:
 
 ```text
 Text / Image / URL
        ↓
 Unified input
        ↓
-Mention / entity extraction
+Book Mention Extraction
        ↓
-Book / Film / TV / Podcast candidates
+Book / Work candidates
 ```
 
 Prefer deterministic parsing and platform metadata where possible. OCR is an adapter for image input, not the center of the product.
@@ -88,8 +73,6 @@ Prefer deterministic parsing and platform metadata where possible. OCR is an ada
 ### 3. Confirm
 
 The product should fail closed when identity is uncertain.
-
-Principle:
 
 > Low friction does not mean zero confirmation.
 
@@ -105,141 +88,122 @@ Desired interaction:
 完成
 ```
 
-A wrong automatic route damages trust more than one lightweight confirmation. Ambiguous editions, same-title books/films, TV seasons, and similar entities should use direct choices rather than guessing.
+A wrong automatic route damages trust more than one lightweight confirmation.
 
 ### 4. Route
 
-Current / intended destination model:
+Mainline destination model:
 
 ```text
 📚 Book
    → 豆瓣想读（record）
    → 微信读书可读链接（read）
-
-🎬 Film / TV / Documentary
-   → 豆瓣想看
-
-🎧 Podcast episode
-   → 小宇宙 episode URL
-   → currently exploration / validation, not yet a shipped user feature
 ```
 
-The destination owns the long-term state. The router should not create a duplicate library unless a future use case proves it is necessary.
+The product does not replace either destination.
+
+A useful semantic distinction is:
+
+> 豆瓣负责「我想读什么」，微信读书负责「我现在能不能读」。
+
+## Why Film / TV are not in the main product
+
+For the primary workflow, Film / TV recommendations involve a different behavior: the user often wants to open Douban, inspect ratings / reviews, and then decide whether to watch. That judgment is meaningful and should not be automatically skipped.
+
+The previous Movie / TV implementation is preserved separately in:
+
+```text
+experiment/movie-router
+```
+
+That branch can continue serving users who explicitly want `Film / TV / Documentary → Douban Want-to-Watch`, without broadening the Book-only main product.
 
 ## Knowledge / note boundary
 
-Pure thoughts, quotations and ideas are not the same product object as books, films or podcast episodes.
+Pure thoughts, quotations and ideas should continue to live in the user's existing note tool, such as flomo.
 
 ```text
-有明确对象的推荐
-→ Recommendation Router
+图书推荐
+→ Reading Router
 
-纯观点 / 摘抄 / 灵感
+观点 / 摘抄 / 灵感
 → flomo or the user's existing note tool
 ```
 
-Feishu should not become a second copy of flomo. The product should connect existing systems rather than duplicate them.
+Feishu should not become a second copy of flomo.
 
-## What the product competes with
+## Current main product boundary
 
-The practical alternatives are not primarily Douban, WeRead or Xiaoyuzhou. They are:
-
-- screenshot and forget
-- WeChat Favorites
-- send to self
-- browser bookmarks
-- Notes
-- flomo / other capture tools
-- “I will remember this later”
-
-The product therefore wins by reducing cognitive and operational friction:
-
-> 比“先截图以后再说”更省脑子。
-
-## Current product boundary
-
-### Shipped / usable direction
+### In scope
 
 - Books from text / ISBN / screenshot
 - Multiple books from long text / images
+- Work / Edition confirmation
 - Douban Want-to-Read route
 - WeRead availability / readable-edition route
-- Film / TV / Documentary → Douban Want-to-Watch
-- Same-title Book / Movie disambiguation
-- TV season-family disambiguation
-- Mixed Book + Movie routing for safe cases
+- WeRead Waiting List / re-checking
 - Feishu as the current Capture adapter
+- Future low-friction Capture interfaces such as Share Sheet / browser extension
 
-### Exploration, not yet shipped as a C-end feature
+### Separate experiment
 
-- Podcast Episode Router → Xiaoyuzhou
-- Public Xiaoyuzhou episode matching without user credentials
-- Share Sheet / browser extension / additional Capture adapters
+- Movie / TV / Documentary Router → `experiment/movie-router`
 
-### Explicitly not the goal
+### Not part of the main product now
 
+- Film / TV / Documentary routing
+- Podcast routing
+- universal Recommendation Router
 - universal knowledge base
 - replacing flomo / Obsidian / Notion
-- replacing Douban / WeRead / Xiaoyuzhou
 - AI recommendation feed
 - generic “save everything” app
 - knowledge graph as a product requirement
-- asking ordinary users to capture private app tokens or install HTTPS debugging proxies
 
 ## C-end validation
 
-The next milestone is not “support more entity types.” It is proving that **Capture → Route becomes a repeated habit**.
+The next milestone is not “support more entity types.” It is proving that **Book Capture → Route becomes a repeated habit**.
 
 ### North Star
 
-**Weekly Routed Items per Active User**
+**Weekly Routed Books per Active User**
 
-Count items that successfully reach the intended destination, not merely messages received by the bot.
+Count books that successfully reach the intended reading workflow, not merely messages received by the bot.
 
 ### Supporting metrics
 
-**Activation**
+**Activation** — a new user successfully routes one book in the first session.
 
-> A new user successfully routes one object within the first session.
+**D7 Repeat Capture** — after the first successful route, does the user voluntarily send another book within 7 days?
 
-**D7 Repeat Capture**
-
-> After the first successful route, does the user voluntarily come back and capture another recommendation within 7 days?
-
-**Wrong Route Rate**
-
-> Incorrect automatic routing should remain as close to zero as possible. Prefer `AMBIGUOUS` / confirmation over a confident wrong route.
+**Wrong Route Rate** — incorrect automatic routing should remain as close to zero as possible.
 
 ### First validation cohort
 
-Before expanding further:
-
 - recruit 10–20 target users
 - observe 1–2 weeks of real use
-- collect 100–300 real Capture events
-- record source, object type, success / confirmation / failure, and whether users return without prompting
+- collect 100–300 real Book Capture events
+- record source, success / confirmation / failure, and whether users return without prompting
 
-The strongest early signal is not MAU. It is:
+The strongest early signal is:
 
-> A user chooses to send a second recommendation to the product without being reminded.
+> A user chooses to send a second book to the product without being reminded.
 
 ## Product principles
 
 - Don't replace the user's existing system. Connect it.
-- The router is an intake / routing layer, not the final destination.
+- Book only for the main product until repeat behavior is validated.
+- Automate transport; preserve meaningful user judgment.
+- Prefer one lightweight confirmation over a wrong automatic route.
+- Fail closed when identity is uncertain.
 - Recommendations are abundant; the problem is attention and fragmentation.
 - Do not add an AI recommendation feed before routing behavior is validated.
-- Prefer one lightweight confirmation over a wrong automatic route.
-- Preserve user judgment for meaningful decisions.
-- Fail closed when identity is uncertain.
-- Keep destinations user-specific rather than hard-coded as a single workflow.
-- Ordinary C-end users should not need developer credentials, tokens, Charles, or manual API setup.
-- Every added entity type or Capture adapter should be justified by real user behavior.
+- Every added Capture adapter should be justified by real user behavior.
 
 ## Product thesis
 
-> You already have enough recommendations. We help them reach the right place.
+> You already have enough book recommendations. We help them reach the right place.
 
 Or, in Chinese:
 
-> 你已经不缺推荐了。我们只负责把它们送到对的地方。
+> 你已经不缺书单了。我们只负责把想读的书送回你的阅读系统。
