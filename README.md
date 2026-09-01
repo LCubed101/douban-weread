@@ -1,22 +1,22 @@
 # Douban × WeRead
 
-A self-hosted **Recommendation Router** prototype.
+A self-hosted **Reading Inbox / Reading Router** for books.
 
-> 把别人推荐给我的东西，低摩擦地送进我真正使用的平台。
+> 把别人推荐给我的书，低摩擦地送进我真正使用的阅读系统。
 >
 > Don't replace your system. Connect it.
 
-The project started as a Reading Inbox / Reading Router for books and is now validating the broader **Capture → Identify → Confirm → Route** model across cultural recommendations.
+The main product is intentionally **Book only**.
 
 Current C-end target user:
 
-> 已经在使用豆瓣 / 微信读书 / 小宇宙等内容平台，经常从微信、社交媒体和朋友聊天里收到书影音推荐，但不想再维护一个新的收藏工具的人。
+> 已经在使用豆瓣和 / 或微信读书，经常从微信、社交媒体、群聊和朋友聊天里收到图书推荐，但不想反复手动搜索、也不想维护一个新的收藏工具的人。
 
-Feishu is currently the main Capture adapter. It is not the product boundary or the final knowledge store. The destination apps keep owning the long-term state.
+Feishu is currently the main Capture adapter. It is not the product boundary or the final knowledge store.
 
 Product direction, ICP, boundaries and validation metrics: [docs/PRODUCT_DIRECTION.md](docs/PRODUCT_DIRECTION.md).
 
-Current usable capabilities include:
+Current mainline capabilities include:
 
 - 📖 Book title / ISBN search
 - 📷 Local OCR for screenshots and book images (RapidOCR / ONNX Runtime)
@@ -25,14 +25,16 @@ Current usable capabilities include:
 - 📚 WeRead edition matching and availability checks
 - 🔀 Douban Edition / WeRead Edition separation for the same Work
 - 🔔 WeRead Waiting List / availability re-checking
-- 🎬 Film / TV / Documentary → Douban Want-to-Watch
-- 🔘 Same-title Book / Movie disambiguation with direct buttons
-- 📺 TV season-family recognition and season choice
-- 🧩 Safe mixed Book + Movie routing
 - 🤖 Feishu Bot as the current Capture interface
 - 🍎 macOS LaunchAgent background startup
 
-Podcast Episode Router → Xiaoyuzhou is **still under exploration / validation and is not yet a shipped C-end feature**.
+A previously implemented Movie / TV Router is preserved separately in the experimental branch:
+
+```text
+experiment/movie-router
+```
+
+It is not part of the current Book-only product direction.
 
 **No OpenAI, Claude or Kimi API is required by the current production path, so normal routing does not incur LLM token usage.**
 
@@ -54,9 +56,11 @@ Current destination model:
 
 ```text
 📚 Book → 豆瓣想读 → 微信读书可读链接
-🎬 Film / TV / Documentary → 豆瓣想看
-🎧 Podcast episode → 小宇宙（探索中，未正式上线）
 ```
+
+A useful semantic distinction:
+
+> 豆瓣负责「我想读什么」，微信读书负责「我现在能不能读」。
 
 Pure thoughts / quotations / ideas stay in the user's existing note tool such as flomo. This project should not become a duplicate knowledge base.
 
@@ -67,7 +71,7 @@ Pure thoughts / quotations / ideas stay in the user's existing note tool such as
 - Git
 - A Feishu app / bot if you want to use the chat interface
 - Your own WeRead Agent API key for WeRead availability features
-- Your own Douban Cookie **only if** you want authenticated Douban Want-to-Read / Want-to-Watch actions
+- Your own Douban Cookie **only if** you want authenticated Douban Want-to-Read actions
 
 ## Quick start
 
@@ -250,7 +254,16 @@ This project is intended to be self-hosted.
 - Local OCR uses RapidOCR / ONNX Runtime and does not send image OCR work to an LLM.
 - The current production path does not require OpenAI, Anthropic/Claude or Kimi APIs.
 - Keeping the bot running uses some local memory and network connections, but does not consume LLM tokens.
-- Ordinary future C-end users should not be required to capture private app tokens or install HTTPS debugging proxies.
+
+## Movie / TV experiment
+
+Movie / TV routing remains available as a separate experiment:
+
+```bash
+git checkout experiment/movie-router
+```
+
+This preserves the previously implemented Film / TV / Documentary → Douban Want-to-Watch flow for users who want it, while keeping the main product focused on books.
 
 ## Troubleshooting
 
@@ -276,7 +289,7 @@ python3 -m unittest discover -s tests -p 'test_*.py'
 
 See [ROADMAP.md](ROADMAP.md).
 
-The current product priority is not “add every content type.” It is validating that **Capture → Route becomes a repeated user habit** with a narrow C-end cohort.
+The current product priority is validating whether **Book Capture → Route becomes a repeated user habit** with a narrow C-end cohort.
 
 ## Acknowledgements
 
