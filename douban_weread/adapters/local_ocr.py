@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any, Iterable
 
 
@@ -67,10 +68,31 @@ class LocalImageOcr:
         return self._lines_from_ocr_output(self._ocr(image_bytes))
 
     def _recognize_edition_detail_sync(self, image_bytes: bytes) -> tuple[str, ...]:
+        """Try precise cover-bottom OCR first, then a bounded media fallback.
+
+        The contour detector is fast when the embedded cover has a visible edge,
+        but social/video screenshots often flatten the cover into the background.
+        If the detected regions do not yield publisher/ISBN-like evidence, scan
+        at most two upper-media regions. This keeps the fallback bounded and is
+        still isolated from book-title extraction.
+        """
+
         lines: list[str] = []
         for region in self._book_cover_bottom_regions(image_bytes):
             lines.extend(self._lines_from_ocr_output(self._ocr(region)))
-        return _dedupe_lines(lines)
+
+        deduped = _dedupe_lines(lines)
+        if _has_edition_metadata(deduped):
+            return deduped
+
+        fallback_lines: list[str] = list(deduped)
+        for region in self._upper_media_fallback_regions(image_bytes):
+            fallback_lines.extend(self._lines_from_ocr_output(self._ocr(region)))
+            current = _dedupe_lines(fallback_lines)
+            if _has_edition_metadata(current):
+                return current
+
+        return _dedupe_lines(fallback_lines)
 
     @staticmethod
     def _lines_from_ocr_output(output: object) -> tuple[str, ...]:
@@ -93,22 +115,26 @@ class LocalImageOcr:
         return tuple(lines)
 
     @staticmethod
-    def _book_cover_bottom_regions(image_bytes: bytes) -> tuple[object, ...]:
-        """Find up to two portrait rectangles and OCR only their bottom area.
-
-        Publisher marks on Chinese book covers are commonly near the bottom.
-        Detecting likely portrait cover rectangles keeps the second pass focused
-        and avoids re-reading comments, captions and other social-screen text.
-        """
-
+    def _decode_image(image_bytes: bytes):
         try:
             import cv2
             import numpy as np
         except ImportError:
-            return ()
+            return None
 
         encoded = np.frombuffer(image_bytes, dtype=np.uint8)
-        image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+        return cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+
+    @classmethod
+    def _book_cover_bottom_regions(cls, image_bytes: bytes) -> tuple[object, ...]:
+        """Find up to two portrait rectangles and OCR only their bottom area."""
+
+        try:
+            import cv2
+        except ImportError:
+            return ()
+
+        image = cls._decode_image(image_bytes)
         if image is None:
             return ()
 
@@ -134,13 +160,14 @@ class LocalImageOcr:
                 continue
             if not 0.015 <= area_ratio <= 0.45:
                 continue
-            # Prefer larger, cover-like portrait rectangles.
-            candidates.append((area_ratio, x, y, w, h))
+            # Slightly prefer larger rectangles in the upper 70% of the image,
+            # where social/video posts usually place the media content.
+            top_bonus = 0.01 if y < height * 0.7 else 0.0
+            candidates.append((area_ratio + top_bonus, x, y, w, h))
 
         candidates.sort(reverse=True)
         selected: list[tuple[int, int, int, int]] = []
-        for _area, x, y, w, h in candidates:
-            # Suppress near-duplicate nested rectangles.
+        for _score, x, y, w, h in candidates:
             if any(
                 abs(x - sx) < max(12, int(w * 0.12))
                 and abs(y - sy) < max(12, int(h * 0.12))
@@ -155,22 +182,87 @@ class LocalImageOcr:
 
         regions: list[object] = []
         for x, y, w, h in selected:
-            # OCR the lower 42% of the detected cover, where publisher / ISBN
-            # evidence is most likely to appear.
-            y0 = y + int(h * 0.58)
+            # Chinese publisher marks are commonly close to the lower center of
+            # the front cover. Keep a little more than the bottom third so a logo
+            # or small imprint just above the edge is not clipped.
+            y0 = y + int(h * 0.52)
             crop = image[y0 : y + h, x : x + w]
             if crop.size == 0:
                 continue
-            enlarged = cv2.resize(
-                crop,
-                None,
-                fx=3.0,
-                fy=3.0,
-                interpolation=cv2.INTER_CUBIC,
+            regions.append(
+                cv2.resize(
+                    crop,
+                    None,
+                    fx=3.0,
+                    fy=3.0,
+                    interpolation=cv2.INTER_CUBIC,
+                )
             )
-            regions.append(enlarged)
 
         return tuple(regions)
+
+    @classmethod
+    def _upper_media_fallback_regions(cls, image_bytes: bytes) -> tuple[object, ...]:
+        """Return at most two bounded fallback crops for embedded book covers.
+
+        Many Bilibili/Xiaohongshu-style screenshots place the media in the upper
+        half, while the cover itself may have no detectable outer contour. We
+        therefore scan only the upper-left and upper-center/right media halves,
+        never the comments below. The fallback runs only after a multiple-edition
+        ambiguity and only when precise cover-bottom OCR found no metadata.
+        """
+
+        try:
+            import cv2
+        except ImportError:
+            return ()
+
+        image = cls._decode_image(image_bytes)
+        if image is None:
+            return ()
+
+        height, width = image.shape[:2]
+        if height < 240 or width < 240:
+            return ()
+
+        media_h = max(1, int(height * 0.52))
+        overlap = int(width * 0.06)
+        split = width // 2
+        crops = (
+            image[0:media_h, 0 : min(width, split + overlap)],
+            image[0:media_h, max(0, split - overlap) : width],
+        )
+
+        regions: list[object] = []
+        for crop in crops:
+            if crop.size == 0:
+                continue
+            regions.append(
+                cv2.resize(
+                    crop,
+                    None,
+                    fx=1.8,
+                    fy=1.8,
+                    interpolation=cv2.INTER_CUBIC,
+                )
+            )
+        return tuple(regions)
+
+
+def _has_edition_metadata(lines: Iterable[str]) -> bool:
+    """Return True when OCR found likely edition-level evidence."""
+
+    for value in lines:
+        text = "".join(str(value).split())
+        if not text:
+            continue
+        folded = text.casefold()
+        if "出版" in text or "isbn" in folded:
+            return True
+        digits = re.sub(r"\D", "", text)
+        if len(digits) in {10, 13}:
+            return True
+    return False
 
 
 def _dedupe_lines(values: Iterable[str]) -> tuple[str, ...]:
