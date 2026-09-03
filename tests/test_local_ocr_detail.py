@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from douban_weread.adapters.local_ocr import LocalImageOcr, _dedupe_lines
+from douban_weread.adapters.local_ocr import LocalImageOcr, _dedupe_lines, _has_edition_metadata
 
 
 class LocalOcrDetailTests(unittest.TestCase):
@@ -25,23 +25,50 @@ class LocalOcrDetailTests(unittest.TestCase):
 
         def fake_ocr(value):
             calls.append(value)
-            return ([ [None, "精要主义", 0.99] ], 0.01)
+            return ([[None, "精要主义", 0.99]], 0.01)
 
         adapter._ocr = fake_ocr
         self.assertEqual(adapter._recognize_sync(b"image"), ("精要主义",))
         self.assertEqual(len(calls), 1)
 
-    def test_detail_recognition_uses_only_detail_regions(self) -> None:
+    def test_detail_recognition_stops_when_precise_region_finds_publisher(self) -> None:
         adapter = LocalImageOcr.__new__(LocalImageOcr)
         calls: list[object] = []
-        adapter._ocr = lambda value: calls.append(value) or ([ [None, "浙江人民出版社", 0.9] ], 0.01)
+        adapter._ocr = lambda value: calls.append(value) or ([[None, "浙江人民出版社", 0.9]], 0.01)
         adapter._book_cover_bottom_regions = lambda _value: ("region-a", "region-b")
+        adapter._upper_media_fallback_regions = lambda _value: ("fallback-a",)
 
         self.assertEqual(
             adapter._recognize_edition_detail_sync(b"image"),
             ("浙江人民出版社",),
         )
+        # Precise regions are evaluated first; bounded fallback is not needed.
         self.assertEqual(calls, ["region-a", "region-b"])
+
+    def test_detail_recognition_uses_bounded_fallback_when_precise_regions_have_no_metadata(self) -> None:
+        adapter = LocalImageOcr.__new__(LocalImageOcr)
+        calls: list[object] = []
+
+        def fake_ocr(value):
+            calls.append(value)
+            if value == "fallback-a":
+                return ([[None, "浙江人民出版社", 0.9]], 0.01)
+            return ([[None, "精要主义", 0.9]], 0.01)
+
+        adapter._ocr = fake_ocr
+        adapter._book_cover_bottom_regions = lambda _value: ("region-a",)
+        adapter._upper_media_fallback_regions = lambda _value: ("fallback-a", "fallback-b")
+
+        self.assertEqual(
+            adapter._recognize_edition_detail_sync(b"image"),
+            ("精要主义", "浙江人民出版社"),
+        )
+        self.assertEqual(calls, ["region-a", "fallback-a"])
+
+    def test_metadata_detector_accepts_publisher_and_isbn(self) -> None:
+        self.assertTrue(_has_edition_metadata(("浙江人民出版社",)))
+        self.assertTrue(_has_edition_metadata(("ISBN 978-7-213-07229-1",)))
+        self.assertFalse(_has_edition_metadata(("精要主义", "作者 格雷戈麦吉沃恩")))
 
     def test_dedupe_keeps_first_seen_order(self) -> None:
         self.assertEqual(
