@@ -7,6 +7,7 @@ from douban_weread import feishu_bot as base
 from douban_weread.inbox_weread import WeReadEditionLookup
 from douban_weread.inbox_weread_watch import default_watch_store
 from douban_weread.inbox_wish import DoubanWishFlow, WISH_FLOW_ERRORS, WishFlowKind
+from douban_weread.reconciliation import ReconciliationAction
 
 _ORIGINAL_CANDIDATE_HANDLER = base._maybe_handle_candidate_number
 _ORIGINAL_CARD_HANDLER = base._handle_card_action
@@ -17,6 +18,16 @@ def _is_same_work_existing_wish(result: object) -> bool:
     decision = getattr(result, "decision", None)
     reason = str(getattr(decision, "reason", "") or "").casefold()
     return "same work" in reason and "already marked want-to-read" in reason
+
+
+def _preserved_higher_state(result: object) -> str | None:
+    decision = getattr(result, "decision", None)
+    action = getattr(decision, "action", None)
+    if action is ReconciliationAction.NOOP_ALREADY_READING:
+        return "在读"
+    if action is ReconciliationAction.NOOP_ALREADY_READ:
+        return "读过"
+    return None
 
 
 def _selected_edition_from_result(result: object):
@@ -31,6 +42,9 @@ def _compact_base_text(result: object) -> str:
         return f"✅《{title}》已加入豆瓣想读。"
     if kind is WishFlowKind.ALREADY_WISH:
         return f"✅《{title}》豆瓣已经是想读。"
+    preserved_state = _preserved_higher_state(result)
+    if preserved_state:
+        return f"📖《{title}》已经在豆瓣「{preserved_state}」，已保留当前状态，不会改成「想读」。"
     if _is_same_work_existing_wish(result):
         return f"✅ 豆瓣里已经有《{title}》同一作品的想读版本，不重复添加。"
     return str(getattr(result, "message", "") or "这次没有修改豆瓣。")
@@ -48,10 +62,15 @@ async def _send_commit_result(
 ) -> None:
     base_text = _compact_base_text(result)
     kind = getattr(result, "kind", None)
-    should_lookup = kind in {WishFlowKind.WRITTEN, WishFlowKind.ALREADY_WISH} or _is_same_work_existing_wish(result)
+    preserved_state = _preserved_higher_state(result)
+    should_lookup = (
+        kind in {WishFlowKind.WRITTEN, WishFlowKind.ALREADY_WISH}
+        or _is_same_work_existing_wish(result)
+        or preserved_state is not None
+    )
 
     if should_lookup and selected_edition is not None and weread_lookup is not None:
-        response_text, _lookup_failed = await asyncio.to_thread(
+        response_text, lookup_failed = await asyncio.to_thread(
             base._with_weread_followup,
             base_text=base_text,
             chat_id=chat_id,
@@ -60,6 +79,11 @@ async def _send_commit_result(
             weread_watch_store=weread_watch_store,
             douban_write_completed=kind is WishFlowKind.WRITTEN,
         )
+        if lookup_failed and preserved_state:
+            response_text = response_text.replace(
+                "豆瓣已经是想读，没有修改豆瓣状态。",
+                f"豆瓣已保留「{preserved_state}」状态，没有修改。",
+            )
     else:
         response_text = base_text
 
@@ -77,6 +101,9 @@ def prepare_compact_douban_flow() -> None:
     pressing the first `确认这本` button. We therefore keep the safety preflight
     inside `DoubanWishFlow.commit()` but remove the redundant second confirmation
     card. This patch is installed only for the hybrid Douban+WeRead router.
+
+    Existing Douban Reading / Read states remain protected from downgrade, but
+    they no longer stop the read-only WeRead availability lookup.
     """
 
     global _PREPARED
@@ -178,6 +205,14 @@ def prepare_compact_douban_flow() -> None:
             return {"toast": {"type": "success", "content": "已加入豆瓣想读。"}}
         if kind is WishFlowKind.ALREADY_WISH or _is_same_work_existing_wish(result):
             return {"toast": {"type": "success", "content": "豆瓣已有想读记录。"}}
+        preserved_state = _preserved_higher_state(result)
+        if preserved_state:
+            return {
+                "toast": {
+                    "type": "success",
+                    "content": f"已保留豆瓣「{preserved_state}」状态，并继续检查微信读书。",
+                }
+            }
         return {"toast": {"type": "warning", "content": "这次没有修改豆瓣。"}}
 
     base._maybe_handle_candidate_number = compact_candidate_number
