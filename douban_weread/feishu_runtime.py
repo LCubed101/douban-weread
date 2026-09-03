@@ -12,6 +12,7 @@ from douban_weread.feishu_compact_douban import prepare_compact_douban_flow
 from douban_weread.feishu_hybrid_batch import prepare_hybrid_batch_douban
 from douban_weread.feishu_movie_bot import build_movie_aware_bot
 from douban_weread.feishu_multi_image import prepare_multi_image_support
+from douban_weread.feishu_ocr_edition_resolution import prepare_ocr_edition_resolution
 from douban_weread.feishu_result_polish import prepare_result_polish
 from douban_weread.feishu_tv_polish import prepare_tv_card_polish
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
@@ -83,6 +84,7 @@ def main() -> None:
         mode = router_mode()
         if mode == "douban_weread":
             prepare_compact_douban_flow()
+            prepare_ocr_edition_resolution()
             prepare_hybrid_batch_douban()
             prepare_result_polish()
             prepare_tv_card_polish()
@@ -111,8 +113,8 @@ def main() -> None:
         )
     else:
         print(
-            "Hybrid mode enabled. Books route to Douban Want-to-Read + WeRead; uniquely resolved Film/TV titles route "
-            "to Douban Want-to-Watch. Same-name Book/Movie cases fail closed and require an explicit movie prefix."
+            "Hybrid mode enabled. Books route to Douban Want-to-Read + WeRead; OCR publisher/ISBN evidence can "
+            "resolve a unique Douban edition before asking for a version choice."
         )
     print(f"WeRead availability watch enabled: checking every {interval:g} seconds (default: 604800 / 7d).")
     try:
