@@ -14,6 +14,7 @@ from douban_weread.feishu_movie_bot import build_movie_aware_bot
 from douban_weread.feishu_multi_image import prepare_multi_image_support
 from douban_weread.feishu_ocr_edition_resolution import prepare_ocr_edition_resolution
 from douban_weread.feishu_result_polish import prepare_result_polish
+from douban_weread.feishu_single_image_batch_guard import prepare_single_image_batch_guard
 from douban_weread.feishu_tv_polish import prepare_tv_card_polish
 from douban_weread.feishu_watch_loop import DEFAULT_WATCH_INTERVAL_SECONDS, run_watch_loop
 from douban_weread.safe_logging import install_log_redaction
@@ -86,6 +87,7 @@ def main() -> None:
             prepare_compact_douban_flow()
             prepare_ocr_edition_resolution()
             prepare_hybrid_batch_douban()
+            prepare_single_image_batch_guard()
             prepare_result_polish()
             prepare_tv_card_polish()
         quiet_seconds = image_burst_quiet_seconds()
