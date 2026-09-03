@@ -35,12 +35,7 @@ def _ocr_blob(lines: Sequence[str]) -> str:
 
 
 def _candidate_evidence(candidate: Edition, lines: Sequence[str]) -> tuple[int, tuple[str, ...]]:
-    """Score only edition-level OCR evidence.
-
-    Author/title evidence is deliberately not enough to select an edition because
-    it commonly applies to every edition of the same Work. Publisher, ISBN and
-    publication year are useful edition discriminators.
-    """
+    """Score only edition-level OCR evidence."""
 
     blob = _ocr_blob(lines)
     score = 0
@@ -87,8 +82,6 @@ def resolve_ocr_edition(
     best_score, best_evidence, best = scored[0]
     second_score = scored[1][0] if len(scored) > 1 else -1
 
-    # Publisher is the minimum useful automatic edition discriminator. ISBN is
-    # even stronger. Year-only evidence is intentionally insufficient.
     if best_score < 8:
         return None, ()
     if best_score - second_score < 4:
@@ -115,6 +108,17 @@ def _auto_confirmation(
         candidates=(candidate,),
         message=prompt,
     )
+
+
+async def _detail_lines_if_supported(recognizer, image_bytes: bytes) -> tuple[str, ...]:
+    method = getattr(recognizer, "recognize_edition_detail", None)
+    if not callable(method):
+        return ()
+    try:
+        result = await method(image_bytes)
+    except Exception:
+        return ()
+    return tuple(str(line) for line in result if str(line).strip())
 
 
 async def _metadata_aware_image_handler(
@@ -151,6 +155,8 @@ async def _metadata_aware_image_handler(
         )
         return
 
+    # Stage 1: exactly one normal full-image OCR pass. These lines are used to
+    # identify the book itself and must not be polluted by zoomed detail OCR.
     lines = tuple(await recognizer.recognize(bytes(image_bytes)))
     hint: OcrBookHint = extract_book_hint(lines)
     if not hint.usable:
@@ -168,7 +174,21 @@ async def _metadata_aware_image_handler(
         hint.isbn is None
         and resolution.kind is BookInboxResolutionKind.MULTIPLE_CANDIDATES
     ):
+        # First use any edition evidence already visible in the normal OCR.
         selected, evidence = resolve_ocr_edition(resolution.candidates, hint.lines or lines)
+
+        # Stage 2: only if the title is known, multiple editions remain, and the
+        # first pass could not decide, run one focused cover-bottom detail pass.
+        # These lines are edition evidence only; they never return to the book
+        # mention extractor, so they cannot create fake extra books.
+        if selected is None:
+            detail_lines = await _detail_lines_if_supported(recognizer, bytes(image_bytes))
+            if detail_lines:
+                selected, evidence = resolve_ocr_edition(
+                    resolution.candidates,
+                    (*lines, *detail_lines),
+                )
+
         if selected is not None:
             resolution = _auto_confirmation(request, selected, evidence)
 
@@ -182,7 +202,7 @@ async def _metadata_aware_image_handler(
 
 
 def prepare_ocr_edition_resolution() -> None:
-    """Use OCR publisher/ISBN/year evidence before asking the user to choose an edition."""
+    """Use OCR edition evidence before asking the user to choose a version."""
 
     global _PREPARED
     if _PREPARED:

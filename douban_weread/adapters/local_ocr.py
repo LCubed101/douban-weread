@@ -11,14 +11,10 @@ class LocalOcrError(RuntimeError):
 class LocalImageOcr:
     """Local OCR adapter backed by RapidOCR / ONNX Runtime.
 
-    Images stay on the local machine after they have been downloaded from
-    Feishu. OCR work runs in a worker thread so the bot's asyncio event loop
-    is not blocked by CPU-bound inference.
-
-    A normal full-image OCR pass is followed by overlapping, upscaled detail
-    tiles when OpenCV is available. This second pass is intentionally aimed at
-    small book-cover metadata such as publisher names, which often appear near
-    the bottom of a cover and can be missed in a full social-media screenshot.
+    Normal recognition performs exactly one full-image OCR pass. A separate
+    edition-detail method is available for the rare case where the book title is
+    already known but multiple Douban editions remain and small publisher / ISBN
+    text is needed for disambiguation.
     """
 
     def __init__(self) -> None:
@@ -48,37 +44,37 @@ class LocalImageOcr:
                 f"Local OCR failed: {type(exc).__name__}: {exc}"
             ) from exc
 
+    async def recognize_edition_detail(self, image_bytes: bytes) -> tuple[str, ...]:
+        """OCR only likely book-cover metadata regions, on demand.
+
+        This method is intentionally separate from ``recognize`` so ordinary
+        screenshots remain fast and detail OCR cannot create extra book mentions.
+        """
+
+        if not image_bytes:
+            return ()
+        try:
+            return await asyncio.to_thread(
+                self._recognize_edition_detail_sync,
+                bytes(image_bytes),
+            )
+        except Exception:
+            # Edition detail is optional evidence. Falling back to the version
+            # chooser is safer than failing the entire capture.
+            return ()
+
     def _recognize_sync(self, image_bytes: bytes) -> tuple[str, ...]:
+        return self._lines_from_ocr_output(self._ocr(image_bytes))
+
+    def _recognize_edition_detail_sync(self, image_bytes: bytes) -> tuple[str, ...]:
         lines: list[str] = []
-
-        # First pass: preserve the existing full-image behavior. It is still
-        # best for large title/author text and gives stable reading order.
-        lines.extend(self._lines_from_ocr_output(self._ocr(image_bytes)))
-
-        # Second pass: zoom into overlapping tiles. Social screenshots often
-        # make the book cover occupy only a small fraction of the image, and
-        # publisher text at the bottom of the cover can otherwise be only a few
-        # pixels high. RapidOCR already depends on OpenCV in normal installs;
-        # if OpenCV is unavailable we simply keep the full-image result.
-        for region in self._detail_regions(image_bytes):
+        for region in self._book_cover_bottom_regions(image_bytes):
             lines.extend(self._lines_from_ocr_output(self._ocr(region)))
-
         return _dedupe_lines(lines)
 
     @staticmethod
     def _lines_from_ocr_output(output: object) -> tuple[str, ...]:
-        # RapidOCR commonly returns:
-        #
-        #   (result, elapsed)
-        #
-        # result is a list whose entries look like:
-        #
-        #   [box, text, score]
-        #
-        # Keep this parsing slightly defensive so minor library return-format
-        # differences do not break the bot.
         result: Any
-
         if isinstance(output, tuple) and len(output) == 2:
             result = output[0]
         else:
@@ -97,14 +93,12 @@ class LocalImageOcr:
         return tuple(lines)
 
     @staticmethod
-    def _detail_regions(image_bytes: bytes) -> tuple[object, ...]:
-        """Return upscaled overlapping tiles for small-text OCR.
+    def _book_cover_bottom_regions(image_bytes: bytes) -> tuple[object, ...]:
+        """Find up to two portrait rectangles and OCR only their bottom area.
 
-        Two columns × three rows keeps the extra OCR cost bounded while making
-        small cover metadata substantially larger. Tiles overlap so text near a
-        boundary is not lost. The layout is generic: it also works when a book
-        cover is embedded in the upper-left, center, or lower part of a social
-        screenshot instead of assuming the whole screenshot is the cover.
+        Publisher marks on Chinese book covers are commonly near the bottom.
+        Detecting likely portrait cover rectangles keeps the second pass focused
+        and avoids re-reading comments, captions and other social-screen text.
         """
 
         try:
@@ -122,42 +116,65 @@ class LocalImageOcr:
         if height < 240 or width < 240:
             return ()
 
-        cols = 2
-        rows = 3
-        overlap = 0.12
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 150)
+        contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+        image_area = float(height * width)
+        candidates: list[tuple[float, int, int, int, int]] = []
+
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            if w <= 0 or h <= 0 or h <= w:
+                continue
+            ratio = w / h
+            area_ratio = (w * h) / image_area
+            if not 0.45 <= ratio <= 0.9:
+                continue
+            if not 0.015 <= area_ratio <= 0.45:
+                continue
+            # Prefer larger, cover-like portrait rectangles.
+            candidates.append((area_ratio, x, y, w, h))
+
+        candidates.sort(reverse=True)
+        selected: list[tuple[int, int, int, int]] = []
+        for _area, x, y, w, h in candidates:
+            # Suppress near-duplicate nested rectangles.
+            if any(
+                abs(x - sx) < max(12, int(w * 0.12))
+                and abs(y - sy) < max(12, int(h * 0.12))
+                and abs(w - sw) < max(12, int(w * 0.15))
+                and abs(h - sh) < max(12, int(h * 0.15))
+                for sx, sy, sw, sh in selected
+            ):
+                continue
+            selected.append((x, y, w, h))
+            if len(selected) >= 2:
+                break
+
         regions: list[object] = []
-
-        cell_w = width / cols
-        cell_h = height / rows
-        pad_x = int(cell_w * overlap)
-        pad_y = int(cell_h * overlap)
-
-        for row in range(rows):
-            for col in range(cols):
-                x0 = max(0, int(col * cell_w) - pad_x)
-                y0 = max(0, int(row * cell_h) - pad_y)
-                x1 = min(width, int((col + 1) * cell_w) + pad_x)
-                y1 = min(height, int((row + 1) * cell_h) + pad_y)
-                crop = image[y0:y1, x0:x1]
-                if crop.size == 0:
-                    continue
-
-                # 2× enlargement is enough to help tiny publisher/ISBN text
-                # without turning each tile into an excessively large OCR job.
-                enlarged = cv2.resize(
-                    crop,
-                    None,
-                    fx=2.0,
-                    fy=2.0,
-                    interpolation=cv2.INTER_CUBIC,
-                )
-                regions.append(enlarged)
+        for x, y, w, h in selected:
+            # OCR the lower 42% of the detected cover, where publisher / ISBN
+            # evidence is most likely to appear.
+            y0 = y + int(h * 0.58)
+            crop = image[y0 : y + h, x : x + w]
+            if crop.size == 0:
+                continue
+            enlarged = cv2.resize(
+                crop,
+                None,
+                fx=3.0,
+                fy=3.0,
+                interpolation=cv2.INTER_CUBIC,
+            )
+            regions.append(enlarged)
 
         return tuple(regions)
 
 
 def _dedupe_lines(values: Iterable[str]) -> tuple[str, ...]:
-    """Keep first-seen OCR order while removing duplicate tile detections."""
+    """Keep first-seen OCR order while removing duplicate detections."""
 
     seen: set[str] = set()
     lines: list[str] = []
