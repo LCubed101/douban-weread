@@ -1,6 +1,34 @@
 # Changelog
 
-## Latest
+## v0.2.0 — Book Router UX · 2026-09-13
+
+### 🎯 本次版本重点
+
+- 修复明确书名搜索时的豆瓣候选污染
+  - 搜索《变量》时，不再把《情绪》《变量2》《变量7》《变量8》误当成同一本书的版本候选
+  - 新增严格标题过滤：Search 负责召回，Resolver 负责判断
+  - 保持 fail closed：证据不足时不为了凑候选数量塞入弱匹配结果
+- 新增 **Explicit Text Fast Path**
+  - 纯文本书名 + 唯一候选 + exact title match + 无歧义时，跳过“你想加入的是这本吗？”确认卡
+  - 直接检查 / 写入豆瓣状态并继续查询微信读书
+  - 已有「想读 / 在读 / 读过」状态时保留原状态，不降级
+- 目标体验进一步收束为：
+  - `看到 → 识别 → 必要时选一次 → 完成`
+  - 在确定输入下：`看到 → 发出去 → 完成`
+
+### ✅ 今日验证
+
+- PR #74：strict title filtering before showing Douban candidates
+- PR #75：explicit-text fast path skips confirmation for exact single matches
+- 飞书真实回归：《变量》直接返回豆瓣状态 + 微信读书结果
+
+### 📝 开发日记
+
+- `docs/DEV_LOG_2026-09-13.md`
+
+---
+
+## Previous / Latest
 
 ### ✨ 新功能
 
