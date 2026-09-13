@@ -66,6 +66,22 @@ def is_same_work_title(query: str, candidate_title: str) -> bool:
     return True
 
 
+def is_exact_title_match(query: str, candidate_title: str) -> bool:
+    """True when ``query`` and ``candidate_title`` are the same title.
+
+    Stricter than :func:`is_same_work_title`: only a literal match after the
+    same normalization counts, with no subtitle/edition-marker boundary
+    allowance. A candidate like ``变量：如何应对不确定的未来`` is same-work
+    evidence for filtering, but it is not an *exact* title match for query
+    ``变量`` — callers that must not confuse "same work" with "the user typed
+    exactly this title" (e.g. a UX fast path that skips a confirmation step)
+    should use this instead of :func:`is_same_work_title`.
+    """
+    q = _normalize(query)
+    c = _normalize(candidate_title)
+    return bool(q) and q == c
+
+
 def filter_title_candidates(query: str, candidates: Sequence[Edition]) -> list[Edition]:
     """Keep only candidates with clear title evidence of being the same work.
 

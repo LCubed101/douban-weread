@@ -358,6 +358,8 @@ def build_bot(
                 image_recognizer=recognizer,
                 candidate_store=candidate_store,
                 weread_lookup=lookup,
+                wish_flow=flow,
+                weread_watch_store=watch_store,
             )
             text = " ".join(message.content_text.split()).strip()
             if candidate_store.get(message.chat_id) and not text.isdigit():

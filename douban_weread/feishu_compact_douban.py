@@ -157,6 +157,59 @@ def prepare_compact_douban_flow() -> None:
             )
         return True
 
+    async def compact_explicit_text_fast_path(
+        channel: base.ChannelLike,
+        message: base.InboundMessageLike,
+        request: object,
+        resolution: object,
+        *,
+        candidate_store: base.CandidateSelectionStore,
+        wish_flow: base.WishFlowLike | None,
+        weread_lookup: base.WeReadLookupLike | None = None,
+        weread_watch_store: object | None = None,
+    ) -> bool:
+        """Compact-flow version of the explicit-text fast path (PR: fast-path UX).
+
+        Same eligibility rule as the base implementation (exactly one
+        #74-filtered candidate whose title is a literal match for what the
+        user typed), but reports the outcome with the same friendly,
+        state-preserving wording already used for numeric edition picks —
+        including the WeRead lookup for an existing 在读/读过 state, which
+        the plain base wording does not attempt.
+        """
+
+        if wish_flow is None:
+            return False
+        candidate = base._explicit_text_fast_path_candidate(request, resolution)
+        if candidate is None:
+            return False
+        subject_id = str(getattr(candidate, "douban_id", "") or "").strip()
+        if not subject_id:
+            return False
+
+        candidate_store.clear(message.chat_id)
+        try:
+            result = await asyncio.to_thread(wish_flow.commit, subject_id)
+        except WISH_FLOW_ERRORS as exc:
+            await channel.send(
+                message.chat_id,
+                {"text": f"豆瓣想读暂时没有写入：{exc}"},
+                {"reply_to": message.message_id},
+            )
+            return True
+
+        selected_edition = _selected_edition_from_result(result) or candidate
+        await _send_commit_result(
+            channel,
+            chat_id=message.chat_id,
+            message_id=message.message_id,
+            result=result,
+            selected_edition=selected_edition,
+            weread_lookup=weread_lookup,
+            weread_watch_store=weread_watch_store,
+        )
+        return True
+
     async def compact_card_action(
         channel: base.ChannelLike,
         flow: base.WishFlowLike,
@@ -217,4 +270,5 @@ def prepare_compact_douban_flow() -> None:
 
     base._maybe_handle_candidate_number = compact_candidate_number
     base._handle_card_action = compact_card_action
+    base._maybe_handle_explicit_text_fast_path = compact_explicit_text_fast_path
     _PREPARED = True

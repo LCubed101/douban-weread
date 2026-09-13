@@ -15,6 +15,8 @@ from douban_weread.adapters.local_ocr import LocalImageOcr, LocalOcrError
 from douban_weread.core.models import Edition
 from douban_weread.inbox import (
     BookInboxConfirmation,
+    BookInboxInputKind,
+    BookInboxRequest,
     BookInboxResolution,
     BookInboxResolutionKind,
     BookInboxService,
@@ -37,6 +39,7 @@ from douban_weread.inbox_wish import (
     WishFlowKind,
 )
 from douban_weread.providers.douban import DoubanBookSearchClient, DoubanProviderError
+from douban_weread.resolver import is_exact_title_match
 
 
 class ResourceLike(Protocol):
@@ -266,6 +269,8 @@ def build_bot(
                 image_recognizer=recognizer,
                 candidate_store=candidate_store,
                 weread_lookup=lookup,
+                wish_flow=flow,
+                weread_watch_store=watch_store,
             )
         except (DoubanProviderError, FeishuOcrError, LocalOcrError) as exc:
             await channel.send(
@@ -529,6 +534,8 @@ async def _handle_message(
     image_recognizer: ImageTextRecognizer | None = None,
     candidate_store: CandidateSelectionStore | None = None,
     weread_lookup: WeReadLookupLike | None = None,
+    wish_flow: WishFlowLike | None = None,
+    weread_watch_store: WeReadWatchStoreLike | None = None,
 ) -> None:
     store = candidate_store or CandidateSelectionStore()
 
@@ -585,6 +592,19 @@ async def _handle_message(
 
     request = request_from_text(message.content_text)
     resolution = service.resolve(request)
+
+    if await _maybe_handle_explicit_text_fast_path(
+        channel,
+        message,
+        request,
+        resolution,
+        candidate_store=store,
+        wish_flow=wish_flow,
+        weread_lookup=weread_lookup,
+        weread_watch_store=weread_watch_store,
+    ):
+        return
+
     await _send_resolution(
         channel,
         message,
@@ -592,6 +612,81 @@ async def _handle_message(
         candidate_store=store,
         weread_lookup=weread_lookup,
     )
+
+
+def _explicit_text_fast_path_candidate(
+    request: BookInboxRequest, resolution: BookInboxResolution
+) -> Edition | None:
+    """Return the sole candidate when the explicit-text fast path applies.
+
+    Skipping the "你想加入的是这本吗？" confirmation card is only safe when
+    the user typed a plain title (not ISBN/URL/OCR), #74's strict title
+    filter already narrowed Douban search down to exactly one candidate, and
+    that candidate's title is a literal (not merely same-work/subtitle)
+    match for what the user typed. Book/movie ambiguity is ruled out
+    upstream: FeishuMovieRouter only lets a text message reach this handler
+    at all when it found no matching movie for the same query, so a query
+    that also matches a movie never gets here.
+    """
+    if request.input_kind is not BookInboxInputKind.TEXT:
+        return None
+    if resolution.kind is not BookInboxResolutionKind.CONFIRM:
+        return None
+    confirmation = resolution.confirmation
+    if confirmation is None:
+        return None
+    query = request.search_query or ""
+    if not is_exact_title_match(query, confirmation.candidate.title):
+        return None
+    return confirmation.candidate
+
+
+async def _maybe_handle_explicit_text_fast_path(
+    channel: ChannelLike,
+    message: InboundMessageLike,
+    request: BookInboxRequest,
+    resolution: BookInboxResolution,
+    *,
+    candidate_store: CandidateSelectionStore,
+    wish_flow: WishFlowLike | None,
+    weread_lookup: WeReadLookupLike | None,
+    weread_watch_store: WeReadWatchStoreLike | None,
+) -> bool:
+    if wish_flow is None:
+        return False
+    candidate = _explicit_text_fast_path_candidate(request, resolution)
+    if candidate is None:
+        return False
+    subject_id = (candidate.douban_id or "").strip()
+    if not subject_id:
+        return False
+
+    candidate_store.clear(message.chat_id)
+
+    # Reuse the existing DoubanWishFlow write path unchanged: commit() re-runs
+    # the same Work-level safety inspection used by the card-confirmation
+    # flow, so an existing 想读/在读/读过 state is reported back as-is and
+    # never downgraded — it only writes when the state is genuinely unset.
+    result = wish_flow.commit(subject_id)
+    source_edition = result.decision.target if result.decision is not None else candidate
+    response_text, _lookup_failed = _with_weread_followup(
+        base_text=result.message,
+        chat_id=message.chat_id,
+        source_edition=(
+            source_edition
+            if result.kind in (WishFlowKind.WRITTEN, WishFlowKind.ALREADY_WISH)
+            else None
+        ),
+        weread_lookup=weread_lookup,
+        weread_watch_store=weread_watch_store,
+        douban_write_completed=result.kind is WishFlowKind.WRITTEN,
+    )
+    await channel.send(
+        message.chat_id,
+        {"text": response_text},
+        {"reply_to": message.message_id},
+    )
+    return True
 
 
 async def _maybe_handle_reselect(
