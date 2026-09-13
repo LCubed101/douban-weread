@@ -26,6 +26,19 @@ class FakeDouban:
                 Edition(title="白夜行", authors=["东野圭吾"], douban_id="3259440"),
                 Edition(title="白夜行", authors=["东野圭吾"], douban_id="10554308"),
             ]
+        if title == "变量":
+            # Regression fixture for a real Douban search-relevance pollution
+            # bug: querying "变量" mixed in an unrelated title ("情绪") and
+            # other-numbered sequels ("变量2"/"变量7"/"变量8") alongside the
+            # genuine work and one of its real subtitle editions.
+            return [
+                Edition(title="变量", authors=["何帆"], douban_id="30171723"),
+                Edition(title="情绪", authors=["某作者"], douban_id="99999991"),
+                Edition(title="变量2", authors=["何帆"], douban_id="99999992"),
+                Edition(title="变量：如何应对不确定的未来", authors=["何帆"], douban_id="30469449"),
+                Edition(title="变量7", authors=["何帆"], douban_id="99999997"),
+                Edition(title="变量8", authors=["何帆"], douban_id="99999998"),
+            ]
         return []
 
     def search_by_isbn(self, isbn: str) -> Edition | None:
@@ -67,6 +80,19 @@ class BookInboxServiceTests(unittest.TestCase):
         self.assertEqual(result.kind, BookInboxResolutionKind.MULTIPLE_CANDIDATES)
         self.assertEqual(len(result.candidates), 2)
         self.assertIsNone(result.confirmation)
+
+    def test_title_pollution_is_filtered_before_display(self) -> None:
+        """Regression test for candidate pollution: querying 变量 must never
+        surface 情绪 or the other-numbered sequels 变量2/变量7/变量8."""
+        provider = FakeDouban()
+        result = BookInboxService(provider).resolve(request_from_text("变量"))
+        self.assertEqual(result.kind, BookInboxResolutionKind.MULTIPLE_CANDIDATES)
+        titles = {edition.title for edition in result.candidates}
+        self.assertNotIn("情绪", titles)
+        self.assertNotIn("变量2", titles)
+        self.assertNotIn("变量7", titles)
+        self.assertNotIn("变量8", titles)
+        self.assertEqual(titles, {"变量", "变量：如何应对不确定的未来"})
 
     def test_douban_url_fetches_exact_subject(self) -> None:
         provider = FakeDouban()

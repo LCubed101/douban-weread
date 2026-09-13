@@ -7,6 +7,7 @@ from typing import Protocol
 from urllib.parse import urlparse
 
 from douban_weread.core.models import Edition
+from douban_weread.resolver import filter_title_candidates
 
 
 _DOUBAN_SUBJECT_RE = re.compile(r"/subject/(?P<subject_id>\d+)/?")
@@ -101,9 +102,14 @@ class BookInboxService:
 
         if request.input_kind is BookInboxInputKind.TEXT:
             query = request.search_query or ""
-            candidates = tuple(
-                self.douban_provider.search_by_title(query, count=self.search_limit)
-            )
+            raw_candidates = self.douban_provider.search_by_title(query, count=self.search_limit)
+            # The user typed an explicit title, so raw search relevance is not
+            # trustworthy enough to show as-is: Douban's own search can mix in
+            # unrelated titles and other-numbered sequels (e.g. querying "变量"
+            # returning "情绪" or "变量2"/"变量7"/"变量8"). Require clear title
+            # evidence before a candidate reaches the user or a WeRead lookup,
+            # and fail closed rather than padding the list with weak matches.
+            candidates = tuple(filter_title_candidates(query, raw_candidates))
             if not candidates:
                 return BookInboxResolution(
                     kind=BookInboxResolutionKind.NOT_FOUND,
