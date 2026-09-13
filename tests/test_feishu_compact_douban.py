@@ -4,14 +4,19 @@ import asyncio
 import unittest
 from types import SimpleNamespace
 
+from douban_weread import feishu_bot as base
+from douban_weread import feishu_compact_douban
 from douban_weread.core.models import Edition
+from douban_weread.feishu_bot import CandidateSelectionStore, _handle_message
 from douban_weread.feishu_compact_douban import (
     _compact_base_text,
     _is_same_work_existing_wish,
     _preserved_higher_state,
     _send_commit_result,
+    prepare_compact_douban_flow,
 )
-from douban_weread.inbox_wish import WishFlowKind
+from douban_weread.inbox import BookInboxService
+from douban_weread.inbox_wish import WishFlowKind, WishFlowResult
 from douban_weread.reconciliation import ReconciliationAction
 
 
@@ -140,6 +145,108 @@ class CompactDoubanFlowTest(unittest.TestCase):
         self.assertIn("豆瓣「在读」", text)
         self.assertIn("微信读书", text)
         self.assertNotIn("do not downgrade", text)
+
+
+class _FastPathDouban:
+    def __init__(self, edition: Edition) -> None:
+        self._edition = edition
+
+    def search_by_title(self, title: str, *, count: int = 20) -> list[Edition]:
+        return [self._edition] if title == self._edition.title else []
+
+    def search_by_isbn(self, isbn: str) -> Edition | None:
+        return None
+
+    def get_by_subject_id(self, subject_id: str) -> Edition | None:
+        return None
+
+
+class _FastPathWishFlow:
+    def __init__(self, result: WishFlowResult) -> None:
+        self.result = result
+        self.commit_calls: list[str] = []
+
+    def commit(self, subject_id: str) -> WishFlowResult:
+        self.commit_calls.append(subject_id)
+        return self.result
+
+    def preflight(self, subject_id: str) -> WishFlowResult:  # pragma: no cover - fast path uses commit()
+        return self.result
+
+
+class PrepareCompactDoubanFlowFastPathTests(unittest.TestCase):
+    """Exercise the real prepare_compact_douban_flow() wiring, without leaking
+    the module-global monkeypatch into other test files."""
+
+    def setUp(self) -> None:
+        self._saved_candidate_handler = base._maybe_handle_candidate_number
+        self._saved_card_handler = base._handle_card_action
+        self._saved_fast_path_handler = base._maybe_handle_explicit_text_fast_path
+        self._saved_prepared_flag = feishu_compact_douban._PREPARED
+        feishu_compact_douban._PREPARED = False
+
+    def tearDown(self) -> None:
+        base._maybe_handle_candidate_number = self._saved_candidate_handler
+        base._handle_card_action = self._saved_card_handler
+        base._maybe_handle_explicit_text_fast_path = self._saved_fast_path_handler
+        feishu_compact_douban._PREPARED = self._saved_prepared_flag
+
+    def test_prepare_installs_a_compact_explicit_text_fast_path_handler(self) -> None:
+        prepare_compact_douban_flow()
+        self.assertIsNot(base._maybe_handle_explicit_text_fast_path, self._saved_fast_path_handler)
+
+    def test_compact_fast_path_preserves_reading_state_and_still_checks_weread(self) -> None:
+        prepare_compact_douban_flow()
+
+        edition = Edition(title="精要主义", authors=["格雷格·麦吉沃恩"], douban_id="26576233")
+        service = BookInboxService(_FastPathDouban(edition))
+        wish_flow = _FastPathWishFlow(
+            WishFlowResult(
+                kind=WishFlowKind.BLOCKED,
+                subject_id="26576233",
+                title="精要主义",
+                message="verbose provider message",
+                decision=SimpleNamespace(
+                    target=edition,
+                    reason=(
+                        "The selected edition is already marked reading; "
+                        "do not downgrade it to Want-to-Read."
+                    ),
+                    action=ReconciliationAction.NOOP_ALREADY_READING,
+                ),
+            )
+        )
+        lookup = FakeLookup()
+        channel = FakeChannel()
+        message = SimpleNamespace(
+            chat_id="oc_chat",
+            message_id="om_msg",
+            content_text="精要主义",
+            raw_content_type="text",
+            resources=(),
+        )
+
+        asyncio.run(
+            _handle_message(
+                channel,
+                service,
+                message,
+                candidate_store=CandidateSelectionStore(),
+                wish_flow=wish_flow,
+                weread_lookup=lookup,
+            )
+        )
+
+        # Reused the real write path exactly once, no confirmation card, and
+        # the reading state was reported as preserved (never downgraded) with
+        # the same friendly wording used for the numeric-edition-pick path.
+        self.assertEqual(wish_flow.commit_calls, ["26576233"])
+        self.assertEqual(len(channel.sent), 1)
+        _, payload, _opts = channel.sent[0]
+        self.assertNotIn("card", payload)
+        self.assertIn("豆瓣「在读」", payload["text"])
+        self.assertIn("微信读书", payload["text"])
+        self.assertEqual(lookup.calls, [edition])
 
 
 if __name__ == "__main__":

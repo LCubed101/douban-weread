@@ -123,6 +123,31 @@ class FeishuMovieRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("影视", actions[0]["text"]["content"])
         self.assertIn("图书", actions[1]["text"]["content"])
 
+    async def test_movie_book_ambiguity_never_reaches_the_book_fast_path(self):
+        """Regression test: a title that also matches a movie must never let
+        the explicit-text fast path (feishu_bot._maybe_handle_explicit_text_fast_path)
+        silently add a book to 想读. FeishuMovieRouter.try_handle_message must
+        claim the message and show the choose-one card instead; the base book
+        handler (where the fast path lives) is only reached when this method
+        returns False, so `handled is True` here is sufficient proof that the
+        book side never got a chance to write anything.
+        """
+        item = movie()
+        resolver = FakeResolver(MovieResolveResult(MovieResolveKind.EXACT, item.title, item, (item,)))
+        interest = FakeInterest()
+        router = FeishuMovieRouter(resolver, interest, FakeBookService(True))
+        channel = FakeChannel()
+        message = SimpleNamespace(raw_content_type="text", content_text="机器人之梦", chat_id="c1", message_id="m1")
+
+        handled = await router.try_handle_message(channel, message, recognizer=None)
+
+        self.assertTrue(handled)
+        # Nothing was written to either Douban surface; the user must click a
+        # button (movie or book) before any state changes.
+        self.assertEqual(interest.writes, [])
+        card = channel.sent[0][1]["card"]
+        self.assertEqual(card["header"]["title"]["content"], "这是图书还是影视？")
+
     async def test_bare_movie_word_is_not_sent_to_book_search(self):
         item = movie()
         resolver = FakeResolver(MovieResolveResult(MovieResolveKind.EXACT, item.title, item, (item,)))
