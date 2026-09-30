@@ -59,6 +59,17 @@ class WeReadEditionLookup:
                 search_keyword=source_edition.isbn,
             )
 
+        # Some sold-out/unavailable catalog entries are present in official
+        # search but do not expose enough /book/info metadata for Edition
+        # alignment. In that case the strict resolver above correctly remains
+        # NOT_FOUND. Before giving up, reuse the title-only path, which may
+        # safely preserve an exact-title soldout search hit as UNAVAILABLE.
+        # Never use this fallback to claim positive readability.
+        if aligned.intent.weread_status is WeReadStatus.NOT_FOUND:
+            title_only = self.lookup_title(source_edition.title)
+            if title_only.kind is WeReadLookupKind.UNAVAILABLE:
+                return title_only
+
         intent = aligned.intent
         selected = intent.selected_edition
         deep_link = intent.source_url
@@ -167,7 +178,7 @@ class WeReadEditionLookup:
         if exact_unavailable is not None:
             candidate, edition = exact_unavailable
             deep_link = _candidate_deep_link(candidate, edition)
-            lines = [f"微信读书搜索到了同名《{edition.title}》，当前处于待上架/不可读状态。"]
+            lines = [f"微信读书搜索到了同名《{edition.title}》，但当前目录状态显示不可读。"]
             if deep_link:
                 lines.append(f"查看微信读书：{deep_link}")
             return WeReadLookupResult(
