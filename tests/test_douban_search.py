@@ -130,6 +130,40 @@ class DoubanBookSearchClientTests(unittest.TestCase):
         client = DoubanBookSearchClient(transport=transport)
         self.assertIsNone(client.search_by_isbn("9780000000000"))
 
+    def test_empty_search_response_is_retried_once(self) -> None:
+        search_calls = 0
+
+        def transport(url: str, headers: dict[str, str]) -> _TextResponse:
+            nonlocal search_calls
+            if "/subject_search?" in url:
+                search_calls += 1
+                if search_calls == 1:
+                    return _TextResponse(status=200, body="<html><body>No matches</body></html>")
+                return _TextResponse(status=200, body=SEARCH_HTML)
+            if "/subject/6082808/" in url:
+                return _TextResponse(status=200, body=SUBJECT_6082808_HTML)
+            if "/subject/27107109/" in url:
+                return _TextResponse(status=200, body=SUBJECT_27107109_HTML)
+            raise AssertionError(f"unexpected URL: {url}")
+
+        client = DoubanBookSearchClient(transport=transport)
+        results = client.search_by_title("百年孤独", count=10)
+
+        self.assertEqual(search_calls, 2)
+        self.assertEqual([edition.douban_id for edition in results], ["6082808", "27107109"])
+
+    def test_genuine_empty_search_stops_after_one_retry(self) -> None:
+        search_calls = 0
+
+        def transport(url: str, headers: dict[str, str]) -> _TextResponse:
+            nonlocal search_calls
+            search_calls += 1
+            return _TextResponse(status=200, body="<html><body>No matches</body></html>")
+
+        client = DoubanBookSearchClient(transport=transport)
+        self.assertEqual(client.search_by_title("不存在的书"), [])
+        self.assertEqual(search_calls, 2)
+
     def test_subject_without_title_is_skipped(self) -> None:
         def transport(url: str, headers: dict[str, str]) -> _TextResponse:
             if "/subject_search?" in url:
