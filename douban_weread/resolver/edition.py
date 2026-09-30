@@ -60,6 +60,25 @@ def _title_for_work(value: str) -> str:
     return _norm_text(text)
 
 
+def _subtitle_segment_title_relation(left: str, right: str) -> bool:
+    """Recognize a narrow main-title to colon-delimited subtitle relation.
+
+    Example: 情感化设计 to 设计心理学3：情感化设计（修订版）.
+    This is only title evidence; callers must still require author overlap and
+    must require confirmation before treating it as the same Work.
+    """
+    left_work = _title_for_work(left)
+    right_work = _title_for_work(right)
+    if not left_work or not right_work or left_work == right_work:
+        return False
+
+    for whole, target in ((left, right_work), (right, left_work)):
+        normalized = unicodedata.normalize("NFKC", whole).casefold()
+        for segment in re.split(r"[:：]", normalized)[1:]:
+            if _title_for_work(segment) == target:
+                return True
+    return False
+
 def _first_volume_title_relation(left: str, right: str) -> bool:
     """Recognize a narrow base-title ↔ first-volume title relation.
 
@@ -159,6 +178,7 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
 
     title_similarity = _title_similarity(source.title, candidate.title)
     first_volume_title_variant = _first_volume_title_relation(source.title, candidate.title)
+    subtitle_segment_title_variant = _subtitle_segment_title_relation(source.title, candidate.title)
     source_authors = _norm_people(source.authors)
     candidate_authors = _norm_people(candidate.authors)
     author_overlap = _overlap(source_authors, candidate_authors)
@@ -167,6 +187,8 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
     reasons.append(f"work-title similarity {title_similarity:.2f}")
     if first_volume_title_variant:
         reasons.append("first-volume title variant")
+    if subtitle_segment_title_variant:
+        reasons.append("colon-delimited subtitle title variant")
     if author_overlap:
         reasons.append(f"author overlap {author_overlap:.2f}")
 
@@ -221,7 +243,9 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
     # narrow exception to the normal title threshold is an exact base-title ↔
     # first-volume title relation; that path is still confirmation-only.
     same_work = author_overlap > 0 and (
-        title_similarity >= 0.88 or first_volume_title_variant
+        title_similarity >= 0.88
+        or first_volume_title_variant
+        or subtitle_segment_title_variant
     )
 
     if not same_work:
@@ -246,7 +270,7 @@ def compare_editions(source: Edition, candidate: Edition) -> EditionMatchResult:
     if material:
         kind = MatchKind.ALTERNATIVE_EDITION
         requires_confirmation = True
-    elif first_volume_title_variant:
+    elif first_volume_title_variant or subtitle_segment_title_variant:
         kind = MatchKind.ALTERNATIVE_EDITION
         requires_confirmation = True
     elif edition_differences:
