@@ -132,6 +132,35 @@ class WeReadEditionLookupTests(unittest.TestCase):
         )
         self.assertIn("当前目录状态显示不可读", result.message)
 
+    def test_soldout_exact_title_without_book_info_is_preserved_as_unavailable(self) -> None:
+        provider = KeywordCatalog(
+            {
+                "白夜行": [
+                    WeReadSearchCandidate(
+                        book_id="pending",
+                        title="白夜行",
+                        author="东野圭吾",
+                        soldout=True,
+                        deep_link="https://weread.qq.com/pending",
+                    )
+                ],
+                "9787544291163": [],
+            },
+            {"pending": None},
+        )
+
+        result = WeReadEditionLookup(provider).lookup(source())
+
+        self.assertEqual(result.kind, WeReadLookupKind.UNAVAILABLE)
+        self.assertEqual(result.selected_edition.weread_id, "pending")
+        self.assertEqual(result.deep_link, "https://weread.qq.com/pending")
+        self.assertIn("当前目录状态显示不可读", result.message)
+        self.assertNotIn("待上架", result.message)
+        self.assertEqual(
+            provider.search_calls,
+            [("白夜行", 20), ("9787544291163", 20), ("白夜行", 20)],
+        )
+
     def test_no_same_work_after_title_and_isbn_is_bounded_not_found(self) -> None:
         provider = KeywordCatalog(
             {
