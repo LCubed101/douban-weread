@@ -166,16 +166,24 @@ class DoubanBookSearchClient:
 
     def _search_subject_ids(self, query: str, *, limit: int) -> list[str]:
         params = urlencode({"search_text": query, "cat": "1001"})
-        html = self._get_text(f"{self.base_url}/subject_search?{params}")
+        url = f"{self.base_url}/subject_search?{params}"
 
-        subject_ids: list[str] = []
-        for match in _SUBJECT_ID_RE.finditer(html):
-            subject_id = match.group("id")
-            if subject_id not in subject_ids:
-                subject_ids.append(subject_id)
-            if len(subject_ids) >= limit:
-                break
-        return subject_ids
+        # Douban's public search occasionally returns a successful page with no
+        # subject links even though an immediate retry returns the expected
+        # catalog results. Retry one empty response before treating it as a
+        # genuine no-match. Keep the retry bounded so normal misses stay cheap.
+        for _attempt in range(2):
+            html = self._get_text(url)
+            subject_ids: list[str] = []
+            for match in _SUBJECT_ID_RE.finditer(html):
+                subject_id = match.group("id")
+                if subject_id not in subject_ids:
+                    subject_ids.append(subject_id)
+                if len(subject_ids) >= limit:
+                    break
+            if subject_ids:
+                return subject_ids
+        return []
 
     def _fetch_subject(self, subject_id: str) -> Edition | None:
         url = f"{self.base_url}/subject/{subject_id}/"
