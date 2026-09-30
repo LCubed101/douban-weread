@@ -177,7 +177,7 @@ class WeReadEditionLookupTests(unittest.TestCase):
         self.assertIn("标题或 ISBN", result.message)
         self.assertEqual(
             provider.search_calls,
-            [("白夜行", 3), ("9787544291163", 3)],
+            [("白夜行", 3), ("9787544291163", 3), ("白夜行", 3)],
         )
 
 
