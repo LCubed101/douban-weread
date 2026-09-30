@@ -139,6 +139,57 @@ class WeReadAlignmentTests(unittest.TestCase):
         self.assertIn("first-volume title variant", result.match.reasons)
         self.assertEqual(client.book_calls, ["set", "178677"])
 
+    def test_colon_delimited_subtitle_variant_with_same_author_is_alternative(self) -> None:
+        source = Edition(
+            title="情感化设计",
+            authors=["唐纳德·A·诺曼"],
+            publisher="中信出版社",
+            publish_date="2015-05",
+        )
+        client = FakeCatalogClient(
+            [
+                WeReadSearchCandidate(
+                    book_id="603393",
+                    title="设计心理学3：情感化设计（修订版）",
+                    author="唐纳德·A·诺曼",
+                    soldout=False,
+                    deep_link="https://weread.qq.com/book-detail?type=1&v=example",
+                )
+            ],
+            {
+                "603393": Edition(
+                    title="设计心理学3：情感化设计（修订版）",
+                    authors=["唐纳德·A·诺曼"],
+                    weread_id="603393",
+                )
+            },
+        )
+
+        result = align_to_weread(source, client)
+
+        self.assertEqual(result.intent.weread_status, WeReadStatus.AVAILABLE_ALTERNATIVE)
+        self.assertEqual(result.intent.selected_edition.weread_id, "603393")
+        self.assertTrue(result.match.same_work)
+        self.assertTrue(result.match.requires_confirmation)
+        self.assertIn("colon-delimited subtitle title variant", result.match.reasons)
+
+    def test_colon_delimited_subtitle_variant_without_author_overlap_fails_closed(self) -> None:
+        source = Edition(title="情感化设计", authors=["另一位作者"])
+        client = FakeCatalogClient(
+            [WeReadSearchCandidate(book_id="603393", title="设计心理学3：情感化设计（修订版）", soldout=False)],
+            {
+                "603393": Edition(
+                    title="设计心理学3：情感化设计（修订版）",
+                    authors=["唐纳德·A·诺曼"],
+                    weread_id="603393",
+                )
+            },
+        )
+
+        result = align_to_weread(source, client)
+
+        self.assertEqual(result.intent.weread_status, WeReadStatus.NOT_FOUND)
+        self.assertIsNone(result.intent.selected_edition)
     def test_soldout_same_work_is_unavailable_not_not_found(self) -> None:
         client = FakeCatalogClient(
             [WeReadSearchCandidate(book_id="230107", title="白夜行", soldout=True)],
