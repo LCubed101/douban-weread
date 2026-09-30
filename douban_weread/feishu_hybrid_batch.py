@@ -20,6 +20,9 @@ class _DoubanBatchOutcome:
     title: str
     status: str
     detail: str | None = None
+    # Populated only when status == "ambiguous": the same-work edition
+    # candidates the user needs to pick between. Never used to auto-select.
+    candidates: tuple[Edition, ...] = ()
 
 
 def _norm(value: str | None) -> str:
@@ -78,7 +81,19 @@ def _pick_douban_candidate(
     mention_title: str,
     weread_result: object | None = None,
 ) -> Edition | None:
-    """Pick a Douban edition without making WeRead a prerequisite."""
+    """Pick a Douban edition without making WeRead a prerequisite.
+
+    Returns ``None`` both when nothing safely matched *and* when multiple
+    same-work editions remain and could not be narrowed to one with real
+    evidence (WeRead cross-reference). Callers must not treat a ``None``
+    here as "unresolved, give up" without first checking
+    :func:`_same_work_edition_candidates` — a batch caller that silently
+    picked the first of several remaining candidates would be choosing an
+    edition on the user's behalf, which is never allowed (see BUG 3 in
+    DEV_LOG). Only :func:`_pick_douban_candidate` deciding on its own
+    (single candidate, or one clear WeRead-cross-referenced winner) counts
+    as a safe auto-pick.
+    """
 
     kind = getattr(resolution, "kind", None)
     if kind is BookInboxResolutionKind.CONFIRM:
@@ -104,9 +119,31 @@ def _pick_douban_candidate(
         if best_score >= 8 and len(best) == 1:
             return best[0]
 
-    if exact:
-        return exact[0]
+    # Multiple same-work editions remain (or, occasionally, multiple
+    # different books that merely share an exact title — #74's title
+    # filter only verifies title evidence, not author identity) and there
+    # is no single confident winner. Picking exact[0] here used to be a
+    # silent, unconfirmed Douban write on the user's behalf (BUG 3) — the
+    # correct behavior is the same as the single-book flow: surface the
+    # candidates for a real choice instead of guessing. See
+    # _same_work_edition_candidates().
     return None
+
+
+def _same_work_edition_candidates(resolution: object) -> tuple[Edition, ...]:
+    """Same-work candidates from a MULTIPLE_CANDIDATES resolution, if any.
+
+    #74's title filter has already narrowed Douban search recall down to
+    same-work title evidence before `resolution.candidates` is populated,
+    so every entry here is a genuine edition candidate (or, rarely, a
+    different book that happens to share an exact title) — never raw
+    unfiltered search noise. Returns an empty tuple for every other
+    resolution kind (nothing to disambiguate).
+    """
+
+    if getattr(resolution, "kind", None) is not BookInboxResolutionKind.MULTIPLE_CANDIDATES:
+        return ()
+    return tuple(getattr(resolution, "candidates", ()) or ())
 
 
 def _compact_batch_card(
@@ -117,7 +154,10 @@ def _compact_batch_card(
     watch_store: object | None,
 ) -> dict[str, object]:
     douban_ok = [o for o in douban_outcomes if o.status in {"written", "already"}]
-    douban_attention = [o for o in douban_outcomes if o.status not in {"written", "already"}]
+    douban_ambiguous = [o for o in douban_outcomes if o.status == "ambiguous"]
+    douban_attention = [
+        o for o in douban_outcomes if o.status not in {"written", "already", "ambiguous"}
+    ]
 
     available = []
     waiting = []
@@ -136,16 +176,61 @@ def _compact_batch_card(
             not_found.append((mention, result))
 
     unavailable = waiting + not_found + failed
-    elements: list[dict[str, object]] = [
-        {
-            "tag": "markdown",
-            "content": (
-                f"📚 **{len(mentions)} 本**\n"
-                f"豆瓣：✅ 想读 {len(douban_ok)}/{len(mentions)}\n"
-                f"微信读书：✅ 可读 {len(available)} · 🔍 暂无 {len(unavailable)}"
-            ),
-        }
+    summary_lines = [
+        f"📚 **{len(mentions)} 本**",
+        f"豆瓣：✅ 想读 {len(douban_ok)}/{len(mentions)}"
+        + (f" · 📖 待确认版本 {len(douban_ambiguous)}" if douban_ambiguous else ""),
+        f"微信读书：✅ 可读 {len(available)} · 🔍 暂无 {len(unavailable)}",
     ]
+    elements: list[dict[str, object]] = [{"tag": "markdown", "content": "\n".join(summary_lines)}]
+
+    if douban_ambiguous:
+        elements.append({"tag": "hr"})
+        elements.append(
+            {
+                "tag": "markdown",
+                "content": f"**📖 还有 {len(douban_ambiguous)} 本需要你确认豆瓣版本**（选一个，不会替你猜）：",
+            }
+        )
+        for outcome in douban_ambiguous:
+            elements.append({"tag": "markdown", "content": f"《{outcome.title}》"})
+            for index, edition_candidate in enumerate(outcome.candidates, start=1):
+                details = " · ".join(
+                    value
+                    for value in (
+                        "、".join(edition_candidate.authors) if edition_candidate.authors else None,
+                        edition_candidate.publisher,
+                        edition_candidate.publish_date,
+                        edition_candidate.isbn,
+                    )
+                    if value
+                )
+                subject_id = str(edition_candidate.douban_id or "").strip()
+                elements.append(
+                    {
+                        "tag": "markdown",
+                        "content": f"{index}. {edition_candidate.title}" + (f" · {details}" if details else ""),
+                    }
+                )
+                if subject_id:
+                    # Reuses the existing single-book confirm_wish card
+                    # action (feishu_bot._handle_card_action, patched by
+                    # feishu_compact_douban.compact_card_action) — commit(),
+                    # WeRead follow-up, and result message are unchanged;
+                    # this is the same write path, not a new one.
+                    elements.append(
+                        {
+                            "tag": "action",
+                            "actions": [
+                                {
+                                    "tag": "button",
+                                    "text": {"tag": "plain_text", "content": f"选择 {index}"},
+                                    "type": "primary",
+                                    "value": {"action": "confirm_wish", "douban_subject_id": subject_id},
+                                }
+                            ],
+                        }
+                    )
 
     if douban_attention:
         elements.append({"tag": "hr"})
@@ -201,8 +286,11 @@ def _compact_batch_card(
     return {
         "config": {"wide_screen_mode": True, "update_multi": False},
         "header": {
-            "title": {"tag": "plain_text", "content": "书单已处理"},
-            "template": "green" if douban_ok else "blue",
+            "title": {
+                "tag": "plain_text",
+                "content": "书单处理中" if douban_ambiguous else "书单已处理",
+            },
+            "template": "yellow" if douban_ambiguous else ("green" if douban_ok else "blue"),
         },
         "elements": elements,
     }
@@ -245,6 +333,7 @@ def prepare_hybrid_batch_douban() -> None:
             try:
                 resolution = await asyncio.to_thread(service.resolve, request_from_text(mention.title))
                 candidate = _pick_douban_candidate(resolution, mention.title)
+                ambiguous_source = resolution
 
                 # Retry the search with the main title only, but still compare
                 # returned candidates against the original full title first.
@@ -261,8 +350,22 @@ def prepare_hybrid_batch_douban() -> None:
                         candidate = _pick_douban_candidate(fallback_resolution, mention.title)
                         if candidate is None:
                             candidate = _pick_douban_candidate(fallback_resolution, main_title)
+                        if candidate is None:
+                            ambiguous_source = fallback_resolution
 
                 if candidate is None:
+                    # Multiple same-work (or same-title) editions remain and
+                    # nothing narrowed them to one — this must surface as a
+                    # real choice, never a silent pick (BUG 3). A batch
+                    # never writes Douban on the user's behalf here.
+                    ambiguous_candidates = _same_work_edition_candidates(ambiguous_source)
+                    if len(ambiguous_candidates) > 1:
+                        return _DoubanBatchOutcome(
+                            mention.title,
+                            "ambiguous",
+                            "存在多个豆瓣版本，需要你选择",
+                            candidates=ambiguous_candidates,
+                        )
                     return _DoubanBatchOutcome(mention.title, "unresolved", "没有安全匹配到豆瓣版本")
                 subject_id = str(candidate.douban_id or "").strip()
                 if not subject_id:

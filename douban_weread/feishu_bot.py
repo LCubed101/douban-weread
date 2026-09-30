@@ -8,6 +8,7 @@ from typing import Any, Protocol
 
 from douban_weread.adapters.feishu import (
     build_confirmation_card,
+    build_fuzzy_suggestion_card,
     build_wish_confirmation_card,
 )
 from douban_weread.adapters.feishu_ocr import FeishuImageOcr, FeishuOcrError, ImageTextRecognizer
@@ -835,6 +836,19 @@ async def _send_resolution(
         if confirmation is None:
             raise ValueError("Confirm resolution is missing confirmation data")
         card = build_confirmation_card(confirmation)
+        await channel.send(
+            message.chat_id,
+            {"card": card},
+            {"reply_to": message.message_id},
+        )
+        return
+
+    if resolution.kind is BookInboxResolutionKind.FUZZY_SUGGESTION:
+        store.clear(message.chat_id)
+        confirmation = resolution.confirmation
+        if confirmation is None:
+            raise ValueError("Fuzzy-suggestion resolution is missing confirmation data")
+        card = build_fuzzy_suggestion_card(confirmation)
         await channel.send(
             message.chat_id,
             {"card": card},

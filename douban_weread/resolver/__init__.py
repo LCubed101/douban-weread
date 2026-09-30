@@ -1,4 +1,5 @@
 from .edition import EditionMatchResult, MatchKind, compare_editions, rank_editions
+from .fuzzy_suggest import suggest_fuzzy_title_match
 from .title_filter import filter_title_candidates, is_exact_title_match, is_same_work_title
 
 __all__ = [
@@ -9,4 +10,5 @@ __all__ = [
     "filter_title_candidates",
     "is_exact_title_match",
     "is_same_work_title",
+    "suggest_fuzzy_title_match",
 ]

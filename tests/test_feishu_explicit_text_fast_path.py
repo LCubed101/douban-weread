@@ -238,6 +238,32 @@ class ExplicitTextFastPathTests(unittest.TestCase):
         self.assertEqual(len(channel.sent), 1)
         self.assertIn("card", channel.sent[0][1])
 
+    def test_fuzzy_typo_suggestion_never_enters_the_fast_path(self) -> None:
+        # Regression test tying BUG 1 to #75: a "did you mean" typo
+        # suggestion must always show the confirm/reject card, even though
+        # it is the sole candidate WeRead-style resolution produced — the
+        # fast path only ever fires for BookInboxResolutionKind.CONFIRM.
+        edition = Edition(
+            title="阿纳丝塔夏",
+            authors=["[俄] 弗拉迪米尔·米格列"],
+            publisher="中国青年出版社",
+            douban_id="20495701",
+        )
+        provider = FakeDouban({"阿纳斯塔夏": [edition]})
+        service = BookInboxService(provider)
+        wish_flow = FakeWishFlow(
+            WishFlowResult(kind=WishFlowKind.WRITTEN, subject_id="20495701", title=edition.title, message="written")
+        )
+        channel = FakeChannel()
+
+        _run(channel, service, _message("阿纳斯塔夏"), wish_flow=wish_flow)
+
+        self.assertEqual(len(channel.sent), 1)
+        payload = channel.sent[0][1]
+        self.assertIn("card", payload)
+        self.assertIn("没有完全一致的匹配", payload["card"]["header"]["title"]["content"])
+        self.assertEqual(wish_flow.commit_calls, [])
+
 
 if __name__ == "__main__":
     unittest.main()

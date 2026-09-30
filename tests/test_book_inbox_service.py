@@ -26,6 +26,27 @@ class FakeDouban:
                 Edition(title="白夜行", authors=["东野圭吾"], douban_id="3259440"),
                 Edition(title="白夜行", authors=["东野圭吾"], douban_id="10554308"),
             ]
+        if title == "阿纳斯塔夏":
+            # Regression fixture for BUG 1: a one-character typo (斯 vs 丝).
+            # No exact/same-work title match at all -> should fall through
+            # to the fuzzy "did you mean" suggestion layer.
+            return [
+                Edition(
+                    title="阿纳丝塔夏",
+                    authors=["[俄] 弗拉迪米尔·米格列"],
+                    publisher="中国青年出版社",
+                    publish_date="2016",
+                    douban_id="20495701",
+                )
+            ]
+        if title == "阿纳斯塔娅":
+            # Two equally-close typo candidates (one substituted character
+            # each, same ratio) -> ambiguous "did you mean", fail closed
+            # rather than guessing between them.
+            return [
+                Edition(title="阿纳丝塔娅", douban_id="20495701"),
+                Edition(title="阿纳斯培娅", douban_id="88888888"),
+            ]
         if title == "变量":
             # Regression fixture for a real Douban search-relevance pollution
             # bug: querying "变量" mixed in an unrelated title ("情绪") and
@@ -93,6 +114,41 @@ class BookInboxServiceTests(unittest.TestCase):
         self.assertNotIn("变量7", titles)
         self.assertNotIn("变量8", titles)
         self.assertEqual(titles, {"变量", "变量：如何应对不确定的未来"})
+
+    def test_typo_query_gets_a_fuzzy_did_you_mean_suggestion(self) -> None:
+        """Regression test for BUG 1: 阿纳斯塔夏 (typo) -> suggest 阿纳丝塔夏
+        (real title), but never auto-confirm it."""
+        provider = FakeDouban()
+        result = BookInboxService(provider).resolve(request_from_text("阿纳斯塔夏"))
+        self.assertEqual(result.kind, BookInboxResolutionKind.FUZZY_SUGGESTION)
+        self.assertIsNotNone(result.confirmation)
+        self.assertEqual(result.confirmation.candidate.title, "阿纳丝塔夏")
+        self.assertEqual(result.confirmation.candidate.douban_id, "20495701")
+        # Fuzzy suggestions never ship as a pre-filled candidate list either
+        # (that would look like a same-work MULTIPLE_CANDIDATES set).
+        self.assertEqual(result.candidates, (result.confirmation.candidate,))
+
+    def test_ambiguous_typo_candidates_fail_closed_not_found(self) -> None:
+        """Two equally-plausible typo fixes -> no single obvious answer, so
+        this must behave like an ordinary not_found, never guess between them."""
+        provider = FakeDouban()
+        result = BookInboxService(provider).resolve(request_from_text("阿纳斯塔娅"))
+        self.assertEqual(result.kind, BookInboxResolutionKind.NOT_FOUND)
+        self.assertIsNone(result.confirmation)
+
+    def test_sequel_numbered_titles_are_never_offered_as_fuzzy_suggestions(self) -> None:
+        """变量 must not fuzzy-suggest 变量2/变量7/变量8 either — the #74
+        prefix/volume-suffix exclusion applies to the fuzzy layer too."""
+        provider = FakeDouban()
+        result = BookInboxService(provider).resolve(request_from_text("变量"))
+        # 变量 already has real #74-filtered candidates (MULTIPLE_CANDIDATES),
+        # so the fuzzy layer never even runs here — but confirm directly that
+        # the fuzzy matcher itself refuses these on the raw candidate pool.
+        from douban_weread.resolver import suggest_fuzzy_title_match
+
+        raw = provider.search_by_title("变量", count=5)
+        self.assertIsNone(suggest_fuzzy_title_match("变量", raw))
+        self.assertEqual(result.kind, BookInboxResolutionKind.MULTIPLE_CANDIDATES)
 
     def test_douban_url_fetches_exact_subject(self) -> None:
         provider = FakeDouban()

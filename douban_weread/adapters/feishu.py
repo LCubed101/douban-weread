@@ -162,6 +162,74 @@ def build_confirmation_card(confirmation: BookInboxConfirmation) -> dict[str, An
     }
 
 
+def build_fuzzy_suggestion_card(confirmation: BookInboxConfirmation) -> dict[str, Any]:
+    """Build the "did you mean" typo-suggestion card.
+
+    This is evidence-based (high title similarity, no exact/same-work match
+    found — see douban_weread.resolver.fuzzy_suggest) rather than a
+    confirmed match. It reuses the exact same confirm_book/reject_book
+    action values as build_confirmation_card(), so accepting it goes
+    through the identical preflight/commit safety pipeline; nothing here is
+    ever auto-committed, and the Explicit Text Fast Path never fires for
+    this resolution kind (see feishu_bot._explicit_text_fast_path_candidate).
+    """
+
+    edition = confirmation.candidate
+    query = str(getattr(confirmation.request, "search_query", "") or "").strip()
+
+    details: list[str] = []
+    if edition.authors:
+        details.append("作者：" + "、".join(edition.authors))
+    if edition.publisher:
+        details.append("出版社：" + edition.publisher)
+    if edition.publish_date:
+        details.append("出版：" + edition.publish_date)
+    if edition.isbn:
+        details.append("ISBN：" + edition.isbn)
+
+    identity: dict[str, str] = {}
+    if edition.douban_id:
+        identity["douban_subject_id"] = edition.douban_id
+    if edition.weread_id:
+        identity["weread_book_id"] = edition.weread_id
+
+    heading = f"没有找到完全一致的《{query}》。" if query else "没有找到完全一致的书名。"
+
+    return {
+        "config": {"wide_screen_mode": True, "update_multi": False},
+        "header": {
+            "title": {"tag": "plain_text", "content": "没有完全一致的匹配"},
+            "template": "yellow",
+        },
+        "elements": [
+            {
+                "tag": "markdown",
+                "content": (
+                    f"{heading}\n\n你是不是想找：\n**{edition.title}**\n"
+                    + ("\n".join(details) if details else "")
+                ),
+            },
+            {
+                "tag": "action",
+                "actions": [
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "确认是这本"},
+                        "type": "primary",
+                        "value": {"action": "confirm_book", **identity},
+                    },
+                    {
+                        "tag": "button",
+                        "text": {"tag": "plain_text", "content": "不是这本"},
+                        "type": "danger",
+                        "value": {"action": "reject_book", **identity},
+                    },
+                ],
+            },
+        ],
+    }
+
+
 def build_wish_confirmation_card(*, title: str, subject_id: str) -> dict[str, Any]:
     """Build the second, state-changing confirmation card.
 

@@ -7,7 +7,7 @@ from typing import Protocol
 from urllib.parse import urlparse
 
 from douban_weread.core.models import Edition
-from douban_weread.resolver import filter_title_candidates
+from douban_weread.resolver import filter_title_candidates, suggest_fuzzy_title_match
 
 
 _DOUBAN_SUBJECT_RE = re.compile(r"/subject/(?P<subject_id>\d+)/?")
@@ -26,6 +26,12 @@ class BookInboxInputKind(str, Enum):
 class BookInboxResolutionKind(str, Enum):
     CONFIRM = "confirm"
     MULTIPLE_CANDIDATES = "multiple_candidates"
+    # A high-confidence "did you mean" suggestion for a query that had no
+    # exact/same-work title match (e.g. a one-character typo). This is
+    # NEVER auto-committed — it always requires the same explicit
+    # confirm/reject card as CONFIRM, and the Explicit Text Fast Path only
+    # ever fires for CONFIRM, so a fuzzy suggestion can never skip it.
+    FUZZY_SUGGESTION = "fuzzy_suggestion"
     NOT_FOUND = "not_found"
     PENDING_IMAGE = "pending_image"
     UNSUPPORTED = "unsupported"
@@ -111,6 +117,25 @@ class BookInboxService:
             # and fail closed rather than padding the list with weak matches.
             candidates = tuple(filter_title_candidates(query, raw_candidates))
             if not candidates:
+                # No exact/same-work title evidence at all. Before failing
+                # closed, check for one single, high-confidence "did you
+                # mean" typo suggestion from the same raw search results —
+                # never a relaxed match, never auto-committed (see
+                # resolver.fuzzy_suggest and BookInboxResolutionKind.FUZZY_SUGGESTION).
+                suggestion = suggest_fuzzy_title_match(query, raw_candidates)
+                if suggestion is not None:
+                    confirmation = BookInboxConfirmation(
+                        request=request,
+                        candidate=suggestion,
+                        prompt="没有完全一致的匹配",
+                    )
+                    return BookInboxResolution(
+                        kind=BookInboxResolutionKind.FUZZY_SUGGESTION,
+                        request=request,
+                        confirmation=confirmation,
+                        candidates=(suggestion,),
+                        message=f"没有找到完全一致的《{query}》，你是不是想找《{suggestion.title}》？",
+                    )
                 return BookInboxResolution(
                     kind=BookInboxResolutionKind.NOT_FOUND,
                     request=request,
