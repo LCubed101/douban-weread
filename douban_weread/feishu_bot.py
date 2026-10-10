@@ -80,20 +80,37 @@ class CandidateSelectionStore:
     """Small in-memory per-chat store for one pending multiple-edition choice."""
 
     def __init__(self) -> None:
-        self._by_chat: dict[str, tuple[Edition, ...]] = {}
+        self._by_chat: dict[str, dict[str, tuple[Edition, ...]]] = {}
 
-    def set(self, chat_id: str, candidates: Sequence[Edition]) -> None:
+    def set(
+        self, chat_id: str, candidates: Sequence[Edition], message_id: str | None = None
+    ) -> None:
         values = tuple(candidates)
-        if values:
-            self._by_chat[chat_id] = values
-        else:
+        if not values:
+            self.clear(chat_id)
+            return
+        self._by_chat.setdefault(chat_id, {})[message_id or ""] = values
+
+    def get(self, chat_id: str, reply_to_message_id: str | None = None) -> tuple[Edition, ...]:
+        pending = self._by_chat.get(chat_id, {})
+        if reply_to_message_id:
+            return pending.get(reply_to_message_id, ())
+        if len(pending) == 1:
+            return next(iter(pending.values()))
+        return ()
+
+    def count(self, chat_id: str) -> int:
+        return len(self._by_chat.get(chat_id, {}))
+
+    def clear(self, chat_id: str, message_id: str | None = None) -> None:
+        if message_id is None:
             self._by_chat.pop(chat_id, None)
-
-    def get(self, chat_id: str) -> tuple[Edition, ...]:
-        return self._by_chat.get(chat_id, ())
-
-    def clear(self, chat_id: str) -> None:
-        self._by_chat.pop(chat_id, None)
+            return
+        pending = self._by_chat.get(chat_id)
+        if pending is not None:
+            pending.pop(message_id, None)
+            if not pending:
+                self._by_chat.pop(chat_id, None)
 
 
 ChannelFactory = Callable[[str, str], ChannelLike]
@@ -136,16 +153,18 @@ def build_bot(
     lookup = weread_lookup or WeReadEditionLookup()
     watch_store = weread_watch_store or default_watch_store()
     candidate_store = CandidateSelectionStore()
+    message_lock = asyncio.Lock()
 
     async def on_message(message: InboundMessageLike) -> None:
         try:
-            await _handle_message(
-                channel,
-                service,
-                message,
-                image_recognizer=recognizer,
-                candidate_store=candidate_store,
-            )
+            async with message_lock:
+                await _handle_message(
+                    channel,
+                    service,
+                    message,
+                    image_recognizer=recognizer,
+                    candidate_store=candidate_store,
+                )
         except (DoubanProviderError, FeishuOcrError, LocalOcrError) as exc:
             await channel.send(
                 message.chat_id,
@@ -258,6 +277,14 @@ async def _handle_card_action(
             {"reply_to": message_id} if message_id else None,
         )
         return {"toast": {"type": "info", "content": "检查通过，请再次确认是否加入想读。"}}
+
+    if os.getenv("DOUBAN_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "on"}:
+        await channel.send(
+            chat_id,
+            {"text": f"🧪 DRY RUN：已识别豆瓣版本 {subject_id}，未修改豆瓣想读状态。"},
+            {"reply_to": message_id} if message_id else None,
+        )
+        return {"toast": {"type": "info", "content": "DRY RUN：未修改豆瓣。"}}
 
     result = flow.commit(subject_id)
     source_edition = result.decision.target if result.decision is not None else None
@@ -393,9 +420,24 @@ async def _maybe_handle_candidate_number(
     store: CandidateSelectionStore,
 ) -> bool:
     text = " ".join(message.content_text.split()).strip()
-    candidates = store.get(message.chat_id)
-    if not candidates or not text.isdigit():
+    if not text.isdigit():
         return False
+    reply_id = str(getattr(message, "reply_to_message_id", None) or "").strip() or None
+    candidates = store.get(message.chat_id, reply_id)
+    if not candidates:
+        if store.count(message.chat_id):
+            await channel.send(
+                message.chat_id,
+                {"text": "有多个待选书籍或引用消息不匹配，请引用对应的候选列表回复数字。"},
+                {"reply_to": message.message_id},
+            )
+        else:
+            await channel.send(
+                message.chat_id,
+                {"text": "当前没有待选书籍，请先发送书名。"},
+                {"reply_to": message.message_id},
+            )
+        return True
 
     choice = int(text)
     if choice < 1 or choice > len(candidates):
@@ -407,7 +449,10 @@ async def _maybe_handle_candidate_number(
         return True
 
     edition = candidates[choice - 1]
-    store.clear(message.chat_id)
+    if reply_id:
+        store.clear(message.chat_id, reply_id)
+    elif store.count(message.chat_id) == 1:
+        store.clear(message.chat_id)
     request = request_from_text(edition.isbn or edition.title)
     confirmation = BookInboxConfirmation(request=request, candidate=edition)
     card = build_confirmation_card(confirmation)
@@ -478,7 +523,6 @@ async def _send_resolution(
 ) -> None:
     store = candidate_store or CandidateSelectionStore()
     if resolution.kind is BookInboxResolutionKind.CONFIRM:
-        store.clear(message.chat_id)
         confirmation = resolution.confirmation
         if confirmation is None:
             raise ValueError("Confirm resolution is missing confirmation data")
@@ -491,7 +535,6 @@ async def _send_resolution(
         return
 
     if resolution.kind is BookInboxResolutionKind.MULTIPLE_CANDIDATES:
-        store.set(message.chat_id, resolution.candidates)
         lines = [resolution.message or "找到多个版本："]
         for index, edition in enumerate(resolution.candidates, start=1):
             details = " · ".join(
@@ -508,14 +551,18 @@ async def _send_resolution(
         lines.append(
             f"回复 1–{len(resolution.candidates)} 选择具体版本；也可以发送 ISBN 或豆瓣图书链接。"
         )
-        await channel.send(
+        sent = await channel.send(
             message.chat_id,
             {"text": "\n".join(lines)},
             {"reply_to": message.message_id},
         )
+        sent_id = (
+            sent.get("message_id") if isinstance(sent, Mapping)
+            else getattr(sent, "message_id", None)
+        )
+        store.set(message.chat_id, resolution.candidates, str(sent_id or ""))
         return
 
-    store.clear(message.chat_id)
     await channel.send(
         message.chat_id,
         {"text": resolution.message or "暂时无法识别这本书。"},
