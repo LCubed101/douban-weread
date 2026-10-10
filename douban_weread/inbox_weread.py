@@ -204,6 +204,16 @@ class WeReadEditionLookup:
                 message="\n".join(lines),
             )
 
+        related = _related_weread_hints(query, candidates)
+        related_note = ""
+        if related:
+            lines = ["搜索还返回以下相关书籍（未确认是同一作品或版本）："]
+            for candidate in related:
+                candidate_title = str(getattr(candidate, "title", "") or "").strip()
+                author = str(getattr(candidate, "author", "") or "").strip() or "作者未知"
+                link = str(getattr(candidate, "deep_link", "") or "").strip()
+                lines.append(f"· 《{candidate_title}》 · {author}" + (f" · {link}" if link.startswith("https://weread.qq.com/") else ""))
+            related_note = "\\n" + "\\n".join(lines)
         return WeReadLookupResult(
             kind=WeReadLookupKind.NOT_FOUND,
             source_title=query,
@@ -212,6 +222,7 @@ class WeReadEditionLookup:
             message=(
                 f"微信读书当前搜索没有找到可安全确认的同名《{query}》。"
                 "为避免把相似书名误配成同一本，暂不自动选择其他结果。"
+                + related_note
             ),
         )
 
@@ -295,3 +306,21 @@ def _candidate_deep_link(candidate: object, edition: Edition) -> str | None:
 
 
 WEREAD_LOOKUP_ERRORS = (WeReadProviderError, ValueError)
+
+
+def _related_weread_hints(query: str, candidates: list[object]) -> list[object]:
+    """Return a few search hints without claiming edition/readability matches."""
+    wanted = _normalize_lookup_title(query)
+    if len(wanted) < 3:
+        return []
+    hints: list[object] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        title = str(getattr(candidate, "title", "") or "").strip()
+        normalized = _normalize_lookup_title(title)
+        if wanted in normalized and wanted != normalized and title not in seen:
+            hints.append(candidate)
+            seen.add(title)
+            if len(hints) >= 3:
+                break
+    return hints
