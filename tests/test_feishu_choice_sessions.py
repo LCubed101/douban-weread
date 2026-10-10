@@ -35,6 +35,22 @@ class TwoBooksDouban:
 
 
 class FeishuChoiceSessionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._original_handlers = (
+            base._maybe_handle_candidate_number,
+            base._handle_card_action,
+            base._maybe_handle_explicit_text_fast_path,
+            compact._PREPARED,
+        )
+
+    def tearDown(self) -> None:
+        (
+            base._maybe_handle_candidate_number,
+            base._handle_card_action,
+            base._maybe_handle_explicit_text_fast_path,
+            compact._PREPARED,
+        ) = self._original_handlers
+
     def test_dry_run_env_toggle(self) -> None:
         with patch.dict("os.environ", {"DOUBAN_DRY_RUN": "1"}):
             self.assertTrue(compact._douban_dry_run())
