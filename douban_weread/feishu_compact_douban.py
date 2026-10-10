@@ -121,7 +121,7 @@ def prepare_compact_douban_flow() -> None:
         store: base.CandidateSelectionStore,
     ) -> bool:
         text = " ".join(message.content_text.split()).strip()
-        match = re.fullmatch(r"(?:(?:《([^》]+)》|(.+?))\\s+)?([0-9]{1,3})", text)
+        match = re.fullmatch(r"(?:(?:《([^》]+)》|(.+?))\s+)?([0-9]{1,3})", text)
         if match is None:
             return False
         title = match.group(1) or match.group(2)
