@@ -63,7 +63,25 @@ async def mentions_from_message(
 
     if not text_parts:
         return ()
-    return extract_book_mentions("\n".join(text_parts))
+    mentions = extract_book_mentions("\n".join(text_parts))
+    # One unquoted title per line is valid in a plain Feishu text message.
+    # Do not interpret unquoted OCR lines as books.
+    if getattr(message, "raw_content_type", "") in {"text", "post", ""}:
+        raw = str(getattr(message, "content_text", "") or "")
+        if "\n" in raw and not _image_resource_keys(message):
+            from douban_weread.core.book_mentions import BookMention
+            seen = {"".join(m.title.split()).casefold() for m in mentions}
+            items = list(mentions)
+            for line in raw.splitlines():
+                title = line.strip().strip("《》").strip()
+                if not title or "《" in title or "》" in title or len(title) > 80:
+                    continue
+                key = "".join(title.split()).casefold()
+                if key not in seen:
+                    seen.add(key)
+                    items.append(BookMention(title=title, source="plain_line"))
+            return tuple(items)
+    return mentions
 
 
 async def try_handle_book_batch_message(
