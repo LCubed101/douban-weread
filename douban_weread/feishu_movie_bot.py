@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from collections.abc import Mapping
@@ -83,24 +84,27 @@ class _MovieAwareRawChannel:
         self._router = router
         self._mixed_router = mixed_router
         self._recognizer = recognizer
+        self._chat_locks: dict[str, asyncio.Lock] = {}
 
     def on(self, event: str, handler):
         if event == "message":
             async def wrapped_message(message):
-                try:
-                    if await self._mixed_router.try_handle_message(self, message, self._recognizer):
+                lock = self._chat_locks.setdefault(message.chat_id, asyncio.Lock())
+                async with lock:
+                    try:
+                        if await self._mixed_router.try_handle_message(self, message, self._recognizer):
+                            return None
+                        if await self._router.try_handle_message(self, message, self._recognizer):
+                            return None
+                    except Exception as exc:
+                        print(f"Feishu Movie Router message error: {type(exc).__name__}: {exc}", file=sys.stderr)
+                        await self.send(
+                            message.chat_id,
+                            {"text": "书籍/影视处理暂时失败，豆瓣状态没有继续修改。请稍后再试。"},
+                            {"reply_to": message.message_id},
+                        )
                         return None
-                    if await self._router.try_handle_message(self, message, self._recognizer):
-                        return None
-                except Exception as exc:
-                    print(f"Feishu Movie Router message error: {type(exc).__name__}: {exc}", file=sys.stderr)
-                    await self.send(
-                        message.chat_id,
-                        {"text": "书籍/影视处理暂时失败，豆瓣状态没有继续修改。请稍后再试。"},
-                        {"reply_to": message.message_id},
-                    )
-                    return None
-                return await handler(message)
+                    return await handler(message)
 
             return self._inner.on(event, wrapped_message)
 
