@@ -77,6 +77,17 @@ class FeishuChoiceSessionTests(unittest.TestCase):
         self.assertEqual(provider.title_calls, [])
         self.assertIn("没有待选版本", channel.sent[-1][1]["text"])
 
+    def test_orphan_qualified_number_never_searches_douban(self) -> None:
+        channel, provider = FakeChannel(), TwoBooksDouban()
+        asyncio.run(_handle_message(
+            channel, BookInboxService(provider),
+            FakeMessage(content_text="《君幸食》 2", message_id="orphan-qualified"),
+            candidate_store=CandidateSelectionStore(),
+        ))
+        self.assertEqual(provider.title_calls, [])
+        self.assertIn("没有待选版本", channel.sent[-1][1]["text"])
+        self.assertEqual(channel.sent[-1][2], {"reply_to": "orphan-qualified"})
+
     def test_new_not_found_does_not_erase_other_pending_book(self) -> None:
         channel, provider, store = FakeChannel(), TwoBooksDouban(), CandidateSelectionStore()
         service = BookInboxService(provider)
