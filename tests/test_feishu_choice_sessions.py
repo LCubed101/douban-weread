@@ -106,12 +106,12 @@ class FeishuChoiceSessionTests(unittest.TestCase):
                 patch.object(compact, "WeReadEditionLookup", return_value=FakeWeReadLookup()),
                 patch.object(compact, "default_watch_store", return_value=object()),
                 patch.object(compact, "_send_commit_result", new_callable=AsyncMock),
-            ) as _unused:
+            ):
                 compact.prepare_compact_douban_flow()
                 asyncio.run(base._maybe_handle_candidate_number(
                     channel, FakeMessage(content_text="1"), store,
                 ))
-                self.assertEqual(flow.commits, [])
+                self.assertEqual(flow.commit_calls, [])
                 self.assertIn("《书名》 1", channel.sent[-1][1]["text"])
         finally:
             base._maybe_handle_candidate_number = original_handler
