@@ -35,6 +35,20 @@ class TwoBooksDouban:
 
 
 class FeishuChoiceSessionTests(unittest.TestCase):
+    def test_dry_run_env_toggle(self) -> None:
+        with patch.dict("os.environ", {"DOUBAN_DRY_RUN": "1"}):
+            self.assertTrue(compact._douban_dry_run())
+        with patch.dict("os.environ", {"DOUBAN_DRY_RUN": "false"}):
+            self.assertFalse(compact._douban_dry_run())
+
+    def test_dry_run_notice_does_not_call_commit(self) -> None:
+        channel = FakeChannel()
+        with patch.dict("os.environ", {"DOUBAN_DRY_RUN": "1"}):
+            asyncio.run(compact._send_dry_run_notice(channel, "oc_chat", "om_request", "1001"))
+        self.assertIn("未修改豆瓣", channel.sent[-1][1]["text"])
+        self.assertEqual(channel.sent[-1][2], {"reply_to": "om_request"})
+
+
     def test_quoted_choice_resolves_correct_book_with_two_pending(self) -> None:
         store = CandidateSelectionStore()
         first = [Edition(title="君幸食", douban_id="1001")]
