@@ -339,6 +339,14 @@ def build_bot(
 
     async def on_message(message: base.InboundMessageLike) -> None:
         try:
+            text = " ".join(message.content_text.split()).strip()
+            if message.raw_content_type in {"text", "post", ""} and text.isdecimal() and not candidate_store.get(message.chat_id):
+                await channel.send(
+                    message.chat_id,
+                    {"text": "当前没有可确认的版本选择。请重新发送书名；数字不会作为书名搜索或写入豆瓣。"},
+                    {"reply_to": message.message_id},
+                )
+                return
             if await _try_handle_waiting_list_command(channel, message, watch_store):
                 return
             if await _try_handle_multi_book_message(
