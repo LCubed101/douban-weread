@@ -79,9 +79,11 @@ class BookInboxDoubanProvider(Protocol):
 class BookInboxService:
     """Resolve one Inbox request into a safe, non-mutating confirmation decision."""
 
-    def __init__(self, douban_provider: BookInboxDoubanProvider, *, search_limit: int = 5) -> None:
+    def __init__(self, douban_provider: BookInboxDoubanProvider, *, search_limit: int = 10) -> None:
         self.douban_provider = douban_provider
-        self.search_limit = max(1, min(search_limit, 10))
+        # Search more candidates before strict title filtering. The provider
+        # already caps requests at 20; this does not relax write safeguards.
+        self.search_limit = max(1, min(search_limit, 20))
 
     def resolve(self, request: BookInboxRequest) -> BookInboxResolution:
         if request.input_kind is BookInboxInputKind.DOUBAN_URL:
