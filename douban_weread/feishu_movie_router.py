@@ -227,6 +227,10 @@ class FeishuMovieRouter:
             raw = " ".join(message.content_text.split()).strip()
             if not raw:
                 return False
+            # A short numeric reply belongs to the book-edition selection flow,
+            # never to the movie resolver or an automatic Douban write.
+            if raw.isdigit() and len(raw) <= 3:
+                return False
             if raw in _BARE_MOVIE_WORDS:
                 await channel.send(
                     message.chat_id,
