@@ -9,6 +9,7 @@ from douban_weread import feishu_bot as base
 from douban_weread.feishu_bot import CandidateSelectionStore, _handle_message
 from douban_weread import feishu_compact_douban as compact
 from douban_weread.feishu_bot_v11 import build_bot
+from douban_weread.feishu_movie_bot import _MovieAwareRawChannel
 from douban_weread.inbox import BookInboxService
 from tests.test_feishu_bot import FakeChannel, FakeMessage, FakeRecognizer, FakeWishFlow, FakeWeReadLookup
 
@@ -116,6 +117,40 @@ class FeishuChoiceSessionTests(unittest.TestCase):
         finally:
             base._maybe_handle_candidate_number = original_handler
             compact._PREPARED = original_prepared
+
+    def test_movie_aware_router_serializes_full_message_pipeline(self) -> None:
+        channel = FakeChannel()
+        events: list[str] = []
+        active = 0
+        peak = 0
+
+        class Router:
+            async def try_handle_message(self, _channel, message, _recognizer):
+                nonlocal active, peak
+                active += 1
+                peak = max(peak, active)
+                if message.content_text == "君幸食":
+                    await asyncio.sleep(0.02)
+                events.append(message.content_text)
+                active -= 1
+                return True
+
+        class MixedRouter:
+            async def try_handle_message(self, _channel, _message, _recognizer):
+                return False
+
+        wrapper = _MovieAwareRawChannel(channel, Router(), MixedRouter(), object())
+        wrapper.on("message", AsyncMock())
+
+        async def run() -> None:
+            await asyncio.gather(
+                channel.handlers["message"](FakeMessage(content_text="君幸食")),
+                channel.handlers["message"](FakeMessage(content_text="球形的荒野")),
+            )
+
+        asyncio.run(run())
+        self.assertEqual(peak, 1)
+        self.assertEqual(events, ["君幸食", "球形的荒野"])
 
     def test_v11_serializes_messages_in_same_chat(self) -> None:
         channel = FakeChannel()
