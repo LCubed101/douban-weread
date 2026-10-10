@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 from typing import Any
 
@@ -13,6 +14,18 @@ from douban_weread.reconciliation import ReconciliationAction
 _ORIGINAL_CANDIDATE_HANDLER = base._maybe_handle_candidate_number
 _ORIGINAL_CARD_HANDLER = base._handle_card_action
 _PREPARED = False
+
+
+def _douban_dry_run() -> bool:
+    return os.environ.get("DOUBAN_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _send_dry_run_notice(channel: base.ChannelLike, chat_id: str, message_id: str | None, subject_id: str) -> None:
+    await channel.send(
+        chat_id,
+        {"text": f"🧪 DRY RUN：已识别豆瓣版本 {subject_id}，未修改豆瓣想读状态。"},
+        {"reply_to": message_id} if message_id else None,
+    )
 
 
 def _is_same_work_existing_wish(result: object) -> bool:
@@ -159,6 +172,10 @@ def prepare_compact_douban_flow() -> None:
         if not subject_id:
             return await _ORIGINAL_CANDIDATE_HANDLER(channel, message, store)
 
+        if _douban_dry_run():
+            await _send_dry_run_notice(channel, message.chat_id, message.message_id, subject_id)
+            return True
+
         try:
             result = await asyncio.to_thread(numeric_flow.commit, subject_id)
             await _send_commit_result(
@@ -209,6 +226,10 @@ def prepare_compact_douban_flow() -> None:
             return False
 
         # Do not discard another book's pending version choice.
+        if _douban_dry_run():
+            await _send_dry_run_notice(channel, message.chat_id, message.message_id, subject_id)
+            return True
+
         try:
             result = await asyncio.to_thread(wish_flow.commit, subject_id)
         except WISH_FLOW_ERRORS as exc:
@@ -253,6 +274,10 @@ def prepare_compact_douban_flow() -> None:
                 weread_lookup=weread_lookup,
                 weread_watch_store=weread_watch_store,
             )
+
+        if _douban_dry_run():
+            await _send_dry_run_notice(channel, chat_id, message_id or None, subject_id)
+            return {"toast": {"type": "info", "content": "DRY RUN：未修改豆瓣。"}}
 
         try:
             result = await asyncio.to_thread(flow.commit, subject_id)
