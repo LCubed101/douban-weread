@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 
 from douban_weread import feishu_bot as base
@@ -120,11 +121,27 @@ def prepare_compact_douban_flow() -> None:
         store: base.CandidateSelectionStore,
     ) -> bool:
         text = " ".join(message.content_text.split()).strip()
-        candidates = store.get(message.chat_id)
-        if not candidates or not text.isdigit():
+        match = re.fullmatch(r"(?:(?:《([^》]+)》|(.+?))\\s+)?([0-9]{1,3})", text)
+        if match is None:
             return False
+        title = match.group(1) or match.group(2)
+        candidates = store.get_for_title(message.chat_id, title) if title else store.get(message.chat_id)
+        if not candidates:
+            titles = store.titles(message.chat_id)
+            if title and not titles:
+                return False
+            hint = (
+                "当前有多本待选：" + "、".join(f"《{name}》" for name in titles)
+                + "。请回复《书名》 1 指定要选择的书。"
+                if len(titles) > 1 else
+                "当前没有这本书的待选版本，请重新发送书名。"
+                if title else
+                "当前没有待选版本。请先发送书名，再选择版本。"
+            )
+            await channel.send(message.chat_id, {"text": hint}, {"reply_to": message.message_id})
+            return True
 
-        choice = int(text)
+        choice = int(match.group(3))
         if choice < 1 or choice > len(candidates):
             await channel.send(
                 message.chat_id,
@@ -187,7 +204,7 @@ def prepare_compact_douban_flow() -> None:
         if not subject_id:
             return False
 
-        candidate_store.clear(message.chat_id)
+        # Do not discard another book's pending version choice.
         try:
             result = await asyncio.to_thread(wish_flow.commit, subject_id)
         except WISH_FLOW_ERRORS as exc:
