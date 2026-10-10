@@ -53,7 +53,11 @@ class WeReadWatchWorkerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             store = WeReadAvailabilityWatchStore(Path(tmp) / "watch.sqlite3")
             source = Edition(title="非普通读者", douban_id="4934784", isbn="9787544714204")
-            store.add_or_refresh(chat_id="oc_chat", source=source, weread=None, deep_link=None)
+            entry = store.add_or_refresh(chat_id="oc_chat", source=source, weread=None, deep_link=None)
+            # New watches are deliberately not due for 90 days; make this one due for the transition test.
+            with store._connect() as conn:
+                conn.execute("UPDATE weread_availability_watch SET next_check_at=? WHERE id=?", ("2000-01-01T00:00:00+00:00", entry.id))
+                conn.commit()
             readable = Edition(title="非普通读者", weread_id="wr1")
             worker = WeReadWatchWorker(
                 store=store,
