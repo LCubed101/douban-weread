@@ -425,18 +425,13 @@ async def _maybe_handle_candidate_number(
     reply_id = str(getattr(message, "reply_to_message_id", None) or "").strip() or None
     candidates = store.get(message.chat_id, reply_id)
     if not candidates:
-        if store.count(message.chat_id):
-            await channel.send(
-                message.chat_id,
-                {"text": "有多个待选书籍或引用消息不匹配，请引用对应的候选列表回复数字。"},
-                {"reply_to": message.message_id},
-            )
-        else:
-            await channel.send(
-                message.chat_id,
-                {"text": "当前没有待选书籍，请先发送书名。"},
-                {"reply_to": message.message_id},
-            )
+        if not store.count(message.chat_id):
+            return False
+        await channel.send(
+            message.chat_id,
+            {"text": "有多个待选书籍或引用消息不匹配，请引用对应的候选列表回复数字。"},
+            {"reply_to": message.message_id},
+        )
         return True
 
     choice = int(text)
