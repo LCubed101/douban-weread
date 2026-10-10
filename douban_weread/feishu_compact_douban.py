@@ -129,7 +129,8 @@ def prepare_compact_douban_flow() -> None:
         if not candidates:
             titles = store.titles(message.chat_id)
             if title and not titles:
-                return False
+                await channel.send(message.chat_id, {"text": "当前没有待选版本，请重新发送书名后选择。"}, {"reply_to": message.message_id})
+                return True
             hint = (
                 "当前有多本待选：" + "、".join(f"《{name}》" for name in titles)
                 + "。请回复《书名》 1 指定要选择的书。"
