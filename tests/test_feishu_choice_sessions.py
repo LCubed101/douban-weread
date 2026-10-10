@@ -35,6 +35,30 @@ class TwoBooksDouban:
 
 
 class FeishuChoiceSessionTests(unittest.TestCase):
+    def test_quoted_choice_resolves_correct_book_with_two_pending(self) -> None:
+        store = CandidateSelectionStore()
+        first = [Edition(title="君幸食", douban_id="1001")]
+        second = [Edition(title="球形的荒野", douban_id="2001")]
+        store.set("chat", first, title="君幸食")
+        store.bind_message("chat", "om_first", "君幸食", first)
+        store.set("chat", second, title="球形的荒野")
+        store.bind_message("chat", "om_second", "球形的荒野", second)
+        self.assertEqual(store.get_for_reply("chat", "om_first"), tuple(first))
+        self.assertEqual(store.get_for_reply("chat", "om_second"), tuple(second))
+        self.assertEqual(store.get_for_reply("other", "om_first"), ())
+        self.assertEqual(store.get("chat"), ())
+
+    def test_replaced_candidate_list_invalidates_old_reply(self) -> None:
+        store = CandidateSelectionStore()
+        first = [Edition(title="君幸食", douban_id="1001")]
+        replacement = [Edition(title="君幸食", douban_id="1002")]
+        store.set("chat", first, title="君幸食")
+        store.bind_message("chat", "om_old", "君幸食", first)
+        store.set("chat", replacement, title="君幸食")
+        self.assertEqual(store.get_for_reply("chat", "om_old"), ())
+        store.clear("chat")
+        self.assertEqual(store.get_for_reply("chat", "om_old"), ())
+
     def test_two_pending_books_never_guess_bare_number(self) -> None:
         channel, provider, store = FakeChannel(), TwoBooksDouban(), CandidateSelectionStore()
         service = BookInboxService(provider)
