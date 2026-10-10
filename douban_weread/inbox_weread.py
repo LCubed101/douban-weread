@@ -76,7 +76,7 @@ class WeReadEditionLookup:
                 # possible alternative instead of incorrectly reporting absent.
                 source_authors = {_normalize_lookup_title(a) for a in source_edition.authors if a.strip()}
                 found_authors = {_normalize_lookup_title(a) for a in candidate.authors if a.strip()}
-                if not source_authors or not found_authors or source_authors.intersection(found_authors):
+                if source_authors and found_authors and source_authors.intersection(found_authors):
                     return WeReadLookupResult(
                         kind=WeReadLookupKind.ALTERNATIVE,
                         source_title=source_edition.title,
