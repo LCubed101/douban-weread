@@ -5,7 +5,9 @@ import unittest
 from unittest.mock import AsyncMock, patch
 
 from douban_weread.core.models import Edition
+from douban_weread import feishu_bot as base
 from douban_weread.feishu_bot import CandidateSelectionStore, _handle_message
+from douban_weread import feishu_compact_douban as compact
 from douban_weread.feishu_bot_v11 import build_bot
 from douban_weread.inbox import BookInboxService
 from tests.test_feishu_bot import FakeChannel, FakeMessage, FakeRecognizer, FakeWishFlow, FakeWeReadLookup
@@ -86,6 +88,34 @@ class FeishuChoiceSessionTests(unittest.TestCase):
             channel, service, FakeMessage(content_text="1"), candidate_store=store,
         ))
         self.assertIn("card", channel.sent[-1][1])
+
+    def test_actual_compact_flow_never_writes_ambiguous_number(self) -> None:
+        channel, provider, store = FakeChannel(), TwoBooksDouban(), CandidateSelectionStore()
+        service = BookInboxService(provider)
+        for title in ("君幸食", "球形的荒野"):
+            asyncio.run(_handle_message(
+                channel, service, FakeMessage(content_text=title), candidate_store=store,
+            ))
+        flow = FakeWishFlow()
+        original_handler = base._maybe_handle_candidate_number
+        original_prepared = compact._PREPARED
+        try:
+            compact._PREPARED = False
+            with (
+                patch.object(compact, "DoubanWishFlow", return_value=flow),
+                patch.object(compact, "WeReadEditionLookup", return_value=FakeWeReadLookup()),
+                patch.object(compact, "default_watch_store", return_value=object()),
+                patch.object(compact, "_send_commit_result", new_callable=AsyncMock),
+            ) as _unused:
+                compact.prepare_compact_douban_flow()
+                asyncio.run(base._maybe_handle_candidate_number(
+                    channel, FakeMessage(content_text="1"), store,
+                ))
+                self.assertEqual(flow.commits, [])
+                self.assertIn("《书名》 1", channel.sent[-1][1]["text"])
+        finally:
+            base._maybe_handle_candidate_number = original_handler
+            compact._PREPARED = original_prepared
 
     def test_v11_serializes_messages_in_same_chat(self) -> None:
         channel = FakeChannel()
