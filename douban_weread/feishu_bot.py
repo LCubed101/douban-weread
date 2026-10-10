@@ -70,6 +70,7 @@ class InboundMessageLike(Protocol):
     content_text: str
     raw_content_type: str
     resources: Sequence[ResourceLike]
+    reply_to_message_id: str | None
 
 
 class WishFlowLike(Protocol):
@@ -87,6 +88,7 @@ class CandidateSelectionStore:
 
     def __init__(self) -> None:
         self._by_chat: dict[str, dict[str, tuple[Edition, ...]]] = {}
+        self._by_message: dict[str, dict[str, tuple[str, tuple[Edition, ...]]]] = {}
 
     @staticmethod
     def _key(title: str) -> str:
@@ -105,6 +107,27 @@ class CandidateSelectionStore:
         if len(entries) > 10:
             entries.pop(next(iter(entries)))
 
+    def bind_message(self, chat_id: str, message_id: str | None, title: str, candidates: Sequence[Edition]) -> None:
+        if not message_id:
+            return
+        key = self._key(title)
+        values = tuple(candidates)
+        if not key or not values:
+            return
+        entries = self._by_message.setdefault(chat_id, {})
+        entries[message_id] = (key, values)
+        if len(entries) > 30:
+            entries.pop(next(iter(entries)))
+
+    def get_for_reply(self, chat_id: str, message_id: str | None) -> tuple[Edition, ...]:
+        if not message_id:
+            return ()
+        record = self._by_message.get(chat_id, {}).get(message_id)
+        if not record:
+            return ()
+        key, candidates = record
+        return candidates if self._by_chat.get(chat_id, {}).get(key) == candidates else ()
+
     def get(self, chat_id: str) -> tuple[Edition, ...]:
         """Only allow bare numeric selection when exactly one book is pending."""
         entries = self._by_chat.get(chat_id, {})
@@ -119,6 +142,7 @@ class CandidateSelectionStore:
     def clear(self, chat_id: str, *, title: str | None = None) -> None:
         if title is None:
             self._by_chat.pop(chat_id, None)
+            self._by_message.pop(chat_id, None)
             return
         entries = self._by_chat.get(chat_id)
         if entries is not None:
@@ -769,7 +793,10 @@ async def _maybe_handle_candidate_number(
     if match is None:
         return False
     title = match.group(1) or match.group(2)
-    candidates = store.get_for_title(message.chat_id, title) if title else store.get(message.chat_id)
+    reply_id = getattr(message, "reply_to_message_id", None)
+    candidates = (store.get_for_title(message.chat_id, title) if title else
+                  store.get_for_reply(message.chat_id, reply_id) if reply_id else
+                  store.get(message.chat_id))
     if not candidates:
         titles = store.titles(message.chat_id)
         if title and not titles:
@@ -913,7 +940,7 @@ async def _send_resolution(
             title=resolution.request.search_query or resolution.candidates[0].title,
         )
         statuses = await _lookup_candidate_statuses(resolution.candidates, weread_lookup)
-        await channel.send(
+        result = await channel.send(
             message.chat_id,
             {
                 "text": _candidate_list_text(
@@ -924,6 +951,13 @@ async def _send_resolution(
             },
             {"reply_to": message.message_id},
         )
+        if getattr(result, "success", False):
+            store.bind_message(
+                message.chat_id,
+                getattr(result, "message_id", None),
+                resolution.request.search_query or resolution.candidates[0].title,
+                resolution.candidates,
+            )
         return
 
     await channel.send(
