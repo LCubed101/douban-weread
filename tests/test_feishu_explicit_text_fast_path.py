@@ -139,7 +139,7 @@ class ExplicitTextFastPathTests(unittest.TestCase):
 
         self.assertEqual(len(channel.sent), 1)
         text = channel.sent[0][1]["text"]
-        self.assertIn("豆瓣已经是想读", text)
+        self.assertIn("已经在豆瓣标记为想读", text)
         self.assertIn("微信读书", text)
         self.assertEqual(lookup.calls, [edition])
 
