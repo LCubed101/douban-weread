@@ -238,7 +238,7 @@ class FeishuBotTests(unittest.TestCase):
         card = channel.sent[-1][1]["card"]
         self.assertIn("听妈妈的话", card["elements"][0]["content"])
         self.assertEqual(
-            card["elements"][1]["actions"][0]["value"]["douban_subject_id"],
+            next(action["value"]["douban_subject_id"] for element in card["elements"] for action in element.get("actions", []) if "douban_subject_id" in action.get("value", {})),
             "38540433",
         )
 
