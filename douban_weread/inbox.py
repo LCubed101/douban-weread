@@ -152,10 +152,23 @@ class BookInboxService:
                         candidates=(suggestion,),
                         message=f"没有找到完全一致的《{query}》，你是不是想找《{suggestion.title}》？",
                     )
+                # Related search hits are discovery hints only, never edition
+                # identity evidence and never eligible for the write path.
+                related = _related_title_hints(query, raw_candidates)
+                suffix = ""
+                if related:
+                    lines = ["豆瓣搜索还返回以下相关书籍（并非已确认的同一作品）："]
+                    for edition in related:
+                        author = "、".join(edition.authors) if edition.authors else "作者未知"
+                        subject_url = edition.source_metadata.get("subject_url")
+                        link = f" · {subject_url}" if isinstance(subject_url, str) and subject_url.startswith("https://book.douban.com/subject/") else ""
+                        lines.append(f"· 《{edition.title}》 · {author}{link}")
+                    lines.append("如需加入想读，请发送完整书名或豆瓣图书链接后选择版本。")
+                    suffix = "\n" + "\n".join(lines)
                 return BookInboxResolution(
                     kind=BookInboxResolutionKind.NOT_FOUND,
                     request=request,
-                    message=f"没有找到《{query}》的豆瓣候选版本。",
+                    message=f"没有找到《{query}》的明确豆瓣候选版本。{suffix}",
                 )
             if len(candidates) == 1:
                 return _confirm(request, candidates[0])
@@ -260,3 +273,21 @@ def _confirm(request: BookInboxRequest, edition: Edition) -> BookInboxResolution
         confirmation=confirmation,
         candidates=(edition,),
     )
+
+
+def _related_title_hints(query: str, candidates: list[Edition]) -> list[Edition]:
+    """Bounded, non-actionable hints; never relax title identity checks."""
+    normalized = re.sub(r"[\\s《》:：，,。.!！?？()（）\\[\\]【】]+", "", query).casefold()
+    if len(normalized) < 3:
+        return []
+    result: list[Edition] = []
+    seen: set[str] = set()
+    for edition in candidates:
+        title = edition.title.strip()
+        normalized_title = re.sub(r"[\\s《》:：，,。.!！?？()（）\\[\\]【】]+", "", title).casefold()
+        if normalized in normalized_title and normalized_title != normalized and title not in seen:
+            seen.add(title)
+            result.append(edition)
+            if len(result) >= 3:
+                break
+    return result
