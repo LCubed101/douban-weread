@@ -125,7 +125,10 @@ def prepare_compact_douban_flow() -> None:
         if match is None:
             return False
         title = match.group(1) or match.group(2)
-        candidates = store.get_for_title(message.chat_id, title) if title else store.get(message.chat_id)
+        reply_id = getattr(message, "reply_to_message_id", None)
+        candidates = (store.get_for_title(message.chat_id, title) if title else
+                      store.get_for_reply(message.chat_id, reply_id) if reply_id else
+                      store.get(message.chat_id))
         if not candidates:
             titles = store.titles(message.chat_id)
             if title and not titles:
