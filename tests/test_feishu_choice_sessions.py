@@ -49,6 +49,76 @@ class FeishuChoiceSessionTests(unittest.TestCase):
         self.assertEqual(channel.sent[-1][2], {"reply_to": "om_request"})
 
 
+    def test_dry_run_blocks_numeric_commit_in_real_handler(self) -> None:
+        channel, store, flow = FakeChannel(), CandidateSelectionStore(), FakeWishFlow()
+        store.set("oc_chat", [Edition(title="君幸食", douban_id="1001")], title="君幸食")
+        original = base._maybe_handle_candidate_number
+        prepared = compact._PREPARED
+        try:
+            compact._PREPARED = False
+            with (
+                patch.dict("os.environ", {"DOUBAN_DRY_RUN": "1"}),
+                patch.object(compact, "DoubanWishFlow", return_value=flow),
+                patch.object(compact, "WeReadEditionLookup", return_value=FakeWeReadLookup()),
+                patch.object(compact, "default_watch_store", return_value=object()),
+            ):
+                compact.prepare_compact_douban_flow()
+                self.assertTrue(asyncio.run(base._maybe_handle_candidate_number(
+                    channel, FakeMessage(content_text="1"), store,
+                )))
+                self.assertEqual(flow.commit_calls, [])
+                self.assertIn("DRY RUN", channel.sent[-1][1]["text"])
+        finally:
+            base._maybe_handle_candidate_number = original
+            compact._PREPARED = prepared
+
+    def test_dry_run_blocks_card_commit_in_real_handler(self) -> None:
+        from tests.test_feishu_bot import FakeCardEvent
+        channel, flow = FakeChannel(), FakeWishFlow()
+        original = base._handle_card_action
+        prepared = compact._PREPARED
+        try:
+            compact._PREPARED = False
+            with (
+                patch.dict("os.environ", {"DOUBAN_DRY_RUN": "1"}),
+                patch.object(compact, "DoubanWishFlow", return_value=flow),
+                patch.object(compact, "WeReadEditionLookup", return_value=FakeWeReadLookup()),
+                patch.object(compact, "default_watch_store", return_value=object()),
+            ):
+                compact.prepare_compact_douban_flow()
+                result = asyncio.run(base._handle_card_action(channel, flow, FakeCardEvent()))
+                self.assertEqual(flow.commit_calls, [])
+                self.assertIn("DRY RUN", channel.sent[-1][1]["text"])
+                self.assertEqual(result["toast"]["type"], "info")
+        finally:
+            base._handle_card_action = original
+            compact._PREPARED = prepared
+
+    def test_dry_run_blocks_explicit_text_commit_in_real_handler(self) -> None:
+        channel, flow = FakeChannel(), FakeWishFlow()
+        original = base._maybe_handle_explicit_text_fast_path
+        prepared = compact._PREPARED
+        try:
+            compact._PREPARED = False
+            with (
+                patch.dict("os.environ", {"DOUBAN_DRY_RUN": "1"}),
+                patch.object(compact, "DoubanWishFlow", return_value=flow),
+                patch.object(compact, "WeReadEditionLookup", return_value=FakeWeReadLookup()),
+                patch.object(compact, "default_watch_store", return_value=object()),
+                patch.object(base, "_explicit_text_fast_path_candidate", return_value=Edition(title="君幸食", douban_id="1001")),
+            ):
+                compact.prepare_compact_douban_flow()
+                result = asyncio.run(base._maybe_handle_explicit_text_fast_path(
+                    channel, FakeMessage(content_text="君幸食"), object(), object(),
+                    candidate_store=CandidateSelectionStore(), wish_flow=flow,
+                ))
+                self.assertTrue(result)
+                self.assertEqual(flow.commit_calls, [])
+                self.assertIn("DRY RUN", channel.sent[-1][1]["text"])
+        finally:
+            base._maybe_handle_explicit_text_fast_path = original
+            compact._PREPARED = prepared
+
     def test_quoted_choice_resolves_correct_book_with_two_pending(self) -> None:
         store = CandidateSelectionStore()
         first = [Edition(title="君幸食", douban_id="1001")]
