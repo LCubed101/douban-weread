@@ -894,7 +894,6 @@ async def _send_resolution(
         return
 
     if resolution.kind is BookInboxResolutionKind.FUZZY_SUGGESTION:
-        store.clear(message.chat_id)
         confirmation = resolution.confirmation
         if confirmation is None:
             raise ValueError("Fuzzy-suggestion resolution is missing confirmation data")
