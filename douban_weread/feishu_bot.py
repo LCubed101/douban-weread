@@ -425,6 +425,18 @@ async def _run_card_action_after_ack(
             )
 
 
+def _douban_dry_run() -> bool:
+    return os.environ.get("DOUBAN_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _send_dry_run_notice(channel: ChannelLike, chat_id: str, message_id: str | None, subject_id: str) -> None:
+    await channel.send(
+        chat_id,
+        {"text": f"🧪 DRY RUN：已识别豆瓣版本 {subject_id}，未修改豆瓣想读状态。"},
+        {"reply_to": message_id} if message_id else None,
+    )
+
+
 async def _handle_card_action(
     channel: ChannelLike,
     flow: WishFlowLike,
@@ -491,6 +503,10 @@ async def _handle_card_action(
             {"reply_to": message_id} if message_id else None,
         )
         return {"toast": {"type": "info", "content": "检查通过，请再次确认是否加入想读。"}}
+
+    if _douban_dry_run():
+        await _send_dry_run_notice(channel, chat_id, message_id, subject_id)
+        return {"toast": {"type": "info", "content": "DRY RUN：未修改豆瓣。"}}
 
     result = flow.commit(subject_id)
     source_edition = result.decision.target if result.decision is not None else None
@@ -718,6 +734,10 @@ async def _maybe_handle_explicit_text_fast_path(
     # the same Work-level safety inspection used by the card-confirmation
     # flow, so an existing 想读/在读/读过 state is reported back as-is and
     # never downgraded — it only writes when the state is genuinely unset.
+    if _douban_dry_run():
+        await _send_dry_run_notice(channel, message.chat_id, message.message_id, subject_id)
+        return True
+
     result = wish_flow.commit(subject_id)
     source_edition = result.decision.target if result.decision is not None else candidate
     response_text, _lookup_failed = _with_weread_followup(
