@@ -35,6 +35,33 @@ class LockedFlowRegressionTests(unittest.TestCase):
         self.assertEqual(store.get_for_reply("chat", "bot-first"), (first,))
         self.assertEqual(store.get("chat"), (latest,))
 
+    def test_douban_punctuation_retry_recovers_verified_title(self):
+        from douban_weread.inbox import BookInboxService, BookInboxResolutionKind, request_from_text
+
+        class Catalog:
+            def __init__(self):
+                self.queries = []
+
+            def search_by_title(self, title, *, count=5):
+                self.queries.append(title)
+                if title == "重启人生就从今日晚餐开始！":
+                    return [Edition(
+                        title=title, authors=["角田光代"],
+                        isbn="9787549645091", douban_id="37325638",
+                    )]
+                return []
+
+        provider = Catalog()
+        result = BookInboxService(provider).resolve(
+            request_from_text("重启人生就从今日晚餐开始")
+        )
+        self.assertEqual(result.kind, BookInboxResolutionKind.CONFIRM)
+        self.assertEqual(result.confirmation.candidate.douban_id, "37325638")
+        self.assertEqual(provider.queries, [
+            "重启人生就从今日晚餐开始",
+            "重启人生就从今日晚餐开始！",
+        ])
+
     def test_unquoted_multiline_books_are_independent(self):
         titles = [
             "落在我身上的雨",
