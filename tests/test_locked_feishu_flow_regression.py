@@ -48,7 +48,7 @@ class LockedFlowRegressionTests(unittest.TestCase):
         ]
         message = SimpleNamespace(
             raw_content_type="text",
-            content_text="\\n".join(titles),
+            content_text="\n".join(titles),
             resources=(),
             message_id="msg-1",
         )
