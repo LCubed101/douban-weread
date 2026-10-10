@@ -152,6 +152,7 @@ def _compact_batch_card(
     douban_outcomes: list[_DoubanBatchOutcome],
     weread_results,
     watch_store: object | None,
+    candidate_statuses: dict[str, tuple[str, ...]] | None = None,
 ) -> dict[str, object]:
     douban_ok = [o for o in douban_outcomes if o.status in {"written", "already"}]
     douban_ambiguous = [o for o in douban_outcomes if o.status == "ambiguous"]
@@ -194,6 +195,7 @@ def _compact_batch_card(
         )
         for outcome in douban_ambiguous:
             elements.append({"tag": "markdown", "content": f"《{outcome.title}》"})
+            statuses = (candidate_statuses or {}).get(outcome.title, ())
             for index, edition_candidate in enumerate(outcome.candidates, start=1):
                 details = " · ".join(
                     value
@@ -212,6 +214,8 @@ def _compact_batch_card(
                         "content": f"{index}. {edition_candidate.title}" + (f" · {details}" if details else ""),
                     }
                 )
+                if index <= len(statuses):
+                    elements.append({"tag": "markdown", "content": statuses[index - 1]})
                 if subject_id:
                     # Reuses the existing single-book confirm_wish card
                     # action (feishu_bot._handle_card_action, patched by
@@ -355,6 +359,11 @@ def prepare_hybrid_batch_douban() -> None:
             if outcome.candidates:
                 candidate_store.set(message.chat_id, outcome.candidates, title=outcome.title)
 
+        candidate_statuses = {}
+        for outcome in douban_outcomes:
+            if outcome.candidates:
+                candidate_statuses[outcome.title] = await base._lookup_candidate_statuses(outcome.candidates, weread_lookup)
+
         weread_results = await v11._lookup_mentions(mentions, weread_lookup)
         for mention, result, error in weread_results:
             if error is not None or result is None:
@@ -378,6 +387,7 @@ def prepare_hybrid_batch_douban() -> None:
                     douban_outcomes=douban_outcomes,
                     weread_results=weread_results,
                     watch_store=weread_watch_store,
+                    candidate_statuses=candidate_statuses,
                 )
             },
             {"reply_to": message.message_id},
