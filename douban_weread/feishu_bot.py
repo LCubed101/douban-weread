@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import sys
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
@@ -82,23 +83,48 @@ class WeReadLookupLike(Protocol):
 
 
 class CandidateSelectionStore:
-    """Small in-memory per-chat store for one pending multiple-edition choice."""
+    """Pending choices keyed by both chat and book title; never guess across books."""
 
     def __init__(self) -> None:
-        self._by_chat: dict[str, tuple[Edition, ...]] = {}
+        self._by_chat: dict[str, dict[str, tuple[Edition, ...]]] = {}
 
-    def set(self, chat_id: str, candidates: Sequence[Edition]) -> None:
+    @staticmethod
+    def _key(title: str) -> str:
+        return title.strip().removeprefix("《").removesuffix("》").strip().casefold()
+
+    def set(self, chat_id: str, candidates: Sequence[Edition], *, title: str | None = None) -> None:
         values = tuple(candidates)
-        if values:
-            self._by_chat[chat_id] = values
-        else:
-            self._by_chat.pop(chat_id, None)
+        if not values:
+            return
+        key = self._key(title or values[0].title)
+        if not key:
+            return
+        entries = self._by_chat.setdefault(chat_id, {})
+        entries[key] = values
+        # Keep memory bounded; old sessions are never silently selected.
+        if len(entries) > 10:
+            entries.pop(next(iter(entries)))
 
     def get(self, chat_id: str) -> tuple[Edition, ...]:
-        return self._by_chat.get(chat_id, ())
+        """Only allow bare numeric selection when exactly one book is pending."""
+        entries = self._by_chat.get(chat_id, {})
+        return next(iter(entries.values())) if len(entries) == 1 else ()
 
-    def clear(self, chat_id: str) -> None:
-        self._by_chat.pop(chat_id, None)
+    def get_for_title(self, chat_id: str, title: str) -> tuple[Edition, ...]:
+        return self._by_chat.get(chat_id, {}).get(self._key(title), ())
+
+    def titles(self, chat_id: str) -> tuple[str, ...]:
+        return tuple(self._by_chat.get(chat_id, {}))
+
+    def clear(self, chat_id: str, *, title: str | None = None) -> None:
+        if title is None:
+            self._by_chat.pop(chat_id, None)
+            return
+        entries = self._by_chat.get(chat_id)
+        if entries is not None:
+            entries.pop(self._key(title), None)
+            if not entries:
+                self._by_chat.pop(chat_id, None)
 
 
 ChannelFactory = Callable[[str, str], ChannelLike]
@@ -218,7 +244,7 @@ def _candidate_list_text(
         lines.append(f"{index}. {edition.title}" + (f"｜{details}" if details else ""))
         if weread_statuses is not None and index <= len(weread_statuses):
             lines.append(f"   {weread_statuses[index - 1]}")
-    lines.append(f"回复 1–{len(candidates)} 选择豆瓣版本；也可以发送 ISBN 或豆瓣图书链接。")
+    lines.append(f"回复 1–{len(candidates)} 选择；如果同时有多本待选，请回复《书名》 1。也可以发送 ISBN 或豆瓣图书链接。")
     lines.append("如果选完后想换版本，发送「重新选择豆瓣版本」。")
     return "\n".join(lines)
 
@@ -662,7 +688,7 @@ async def _maybe_handle_explicit_text_fast_path(
     if not subject_id:
         return False
 
-    candidate_store.clear(message.chat_id)
+    # An unrelated exact match must not discard another book's pending choice.
 
     # Reuse the existing DoubanWishFlow write path unchanged: commit() re-runs
     # the same Work-level safety inspection used by the card-confirmation
@@ -702,9 +728,16 @@ async def _maybe_handle_reselect(
 
     candidates = store.get(message.chat_id)
     if not candidates:
+        titles = store.titles(message.chat_id)
+        hint = (
+            "同时有多本待选：" + "、".join(f"《{title}》" for title in titles)
+            + "。请发送《书名》 1 选择对应版本。"
+            if titles else
+            "当前没有可重新选择的豆瓣版本。请重新发送书名、ISBN 或豆瓣图书链接。"
+        )
         await channel.send(
             message.chat_id,
-            {"text": "当前没有可重新选择的豆瓣版本。请重新发送书名、ISBN 或豆瓣图书链接。"},
+            {"text": hint},
             {"reply_to": message.message_id},
         )
         return True
@@ -730,11 +763,29 @@ async def _maybe_handle_candidate_number(
     store: CandidateSelectionStore,
 ) -> bool:
     text = " ".join(message.content_text.split()).strip()
-    candidates = store.get(message.chat_id)
-    if not candidates or not text.isdigit():
+    # Never interpret a short standalone number as a book title or write it to Douban.
+    # When multiple books are pending, require an explicit title: 《君幸食》 1.
+    match = re.fullmatch(r"(?:(?:《([^》]+)》|(.+?))\s+)?([0-9]{1,3})", text)
+    if match is None:
         return False
+    title = match.group(1) or match.group(2)
+    candidates = store.get_for_title(message.chat_id, title) if title else store.get(message.chat_id)
+    if not candidates:
+        titles = store.titles(message.chat_id)
+        if title and not titles:
+            return False  # Not a selection command; preserve ordinary book queries.
+        hint = (
+            "当前有多本待选：" + "、".join(f"《{name}》" for name in titles)
+            + "。请回复《书名》 1 指定要选择的书。"
+            if len(titles) > 1 else
+            "当前没有这本书的待选版本，请重新发送书名。"
+            if title else
+            "当前没有待选版本。请先发送书名，再选择版本。"
+        )
+        await channel.send(message.chat_id, {"text": hint}, {"reply_to": message.message_id})
+        return True
 
-    choice = int(text)
+    choice = int(match.group(3))
     if choice < 1 or choice > len(candidates):
         await channel.send(
             message.chat_id,
@@ -831,7 +882,6 @@ async def _send_resolution(
 ) -> None:
     store = candidate_store or CandidateSelectionStore()
     if resolution.kind is BookInboxResolutionKind.CONFIRM:
-        store.clear(message.chat_id)
         confirmation = resolution.confirmation
         if confirmation is None:
             raise ValueError("Confirm resolution is missing confirmation data")
@@ -857,7 +907,11 @@ async def _send_resolution(
         return
 
     if resolution.kind is BookInboxResolutionKind.MULTIPLE_CANDIDATES:
-        store.set(message.chat_id, resolution.candidates)
+        store.set(
+            message.chat_id,
+            resolution.candidates,
+            title=resolution.request.search_query or resolution.candidates[0].title,
+        )
         statuses = await _lookup_candidate_statuses(resolution.candidates, weread_lookup)
         await channel.send(
             message.chat_id,
@@ -872,7 +926,6 @@ async def _send_resolution(
         )
         return
 
-    store.clear(message.chat_id)
     await channel.send(
         message.chat_id,
         {"text": resolution.message or "暂时无法识别这本书。"},
