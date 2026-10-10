@@ -264,7 +264,7 @@ class FeishuBotTests(unittest.TestCase):
                 candidate_store=store,
             )
         )
-        self.assertEqual(provider.title_calls, ["听妈妈的话", "1"])
+        self.assertEqual(provider.title_calls, ["听妈妈的话"])
         self.assertNotIn("card", channel.sent[-1][1])
         self.assertEqual(len(store.get("chat_a")), 2)
         self.assertEqual(store.get("chat_b"), ())
@@ -295,7 +295,7 @@ class FeishuBotTests(unittest.TestCase):
         self.assertIn("请回复 1–2", channel.sent[-1][1]["text"])
         self.assertEqual(len(store.get("oc_chat")), 2)
 
-    def test_candidate_selection_clears_pending_list(self) -> None:
+    def test_candidate_selection_keeps_list_for_explicit_reselect(self) -> None:
         channel = FakeChannel()
         provider = MultiCandidateDouban()
         service = BookInboxService(provider)
@@ -318,7 +318,7 @@ class FeishuBotTests(unittest.TestCase):
                 candidate_store=store,
             )
         )
-        self.assertEqual(store.get("oc_chat"), ())
+        self.assertEqual(len(store.get("oc_chat")), 2)
 
     def test_first_card_confirmation_only_preflights_and_sends_second_card(self) -> None:
         channel = FakeChannel()
