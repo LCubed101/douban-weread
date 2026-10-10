@@ -178,6 +178,7 @@ def prepare_compact_douban_flow() -> None:
 
         try:
             result = await asyncio.to_thread(numeric_flow.commit, subject_id)
+            store.clear(message.chat_id, title=title or edition.title)
             await _send_commit_result(
                 channel,
                 chat_id=message.chat_id,

@@ -102,6 +102,7 @@ class CandidateSelectionStore:
         if not key:
             return
         entries = self._by_chat.setdefault(chat_id, {})
+        entries.pop(key, None)
         entries[key] = values
         # Keep memory bounded; old sessions are never silently selected.
         if len(entries) > 10:
@@ -129,9 +130,9 @@ class CandidateSelectionStore:
         return candidates if self._by_chat.get(chat_id, {}).get(key) == candidates else ()
 
     def get(self, chat_id: str) -> tuple[Edition, ...]:
-        """Only allow bare numeric selection when exactly one book is pending."""
+        """A bare number selects the most recently presented pending book."""
         entries = self._by_chat.get(chat_id, {})
-        return next(iter(entries.values())) if len(entries) == 1 else ()
+        return next(reversed(entries.values())) if entries else ()
 
     def get_for_title(self, chat_id: str, title: str) -> tuple[Edition, ...]:
         return self._by_chat.get(chat_id, {}).get(self._key(title), ())

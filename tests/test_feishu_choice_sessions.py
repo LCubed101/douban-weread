@@ -146,7 +146,7 @@ class FeishuChoiceSessionTests(unittest.TestCase):
         self.assertEqual(store.get_for_reply("chat", "om_first"), tuple(first))
         self.assertEqual(store.get_for_reply("chat", "om_second"), tuple(second))
         self.assertEqual(store.get_for_reply("other", "om_first"), ())
-        self.assertEqual(store.get("chat"), ())
+        self.assertEqual(store.get("chat"), tuple(second))
 
     def test_replaced_candidate_list_invalidates_old_reply(self) -> None:
         store = CandidateSelectionStore()
@@ -159,7 +159,7 @@ class FeishuChoiceSessionTests(unittest.TestCase):
         store.clear("chat")
         self.assertEqual(store.get_for_reply("chat", "om_old"), ())
 
-    def test_two_pending_books_never_guess_bare_number(self) -> None:
+    def test_two_pending_books_bare_number_selects_newest(self) -> None:
         channel, provider, store = FakeChannel(), TwoBooksDouban(), CandidateSelectionStore()
         service = BookInboxService(provider)
         for title in ("君幸食", "球形的荒野"):
@@ -171,8 +171,8 @@ class FeishuChoiceSessionTests(unittest.TestCase):
             channel, service, FakeMessage(content_text="1", message_id="choice"), candidate_store=store,
         ))
         self.assertEqual(provider.title_calls, ["君幸食", "球形的荒野"])
-        self.assertNotIn("card", channel.sent[-1][1])
-        self.assertIn("《书名》 1", channel.sent[-1][1]["text"])
+        card = channel.sent[-1][1]["card"]
+        self.assertIn("球形的荒野", str(card))
         self.assertEqual(channel.sent[-1][2], {"reply_to": "choice"})
 
     def test_explicit_title_number_selects_correct_book(self) -> None:
@@ -225,7 +225,7 @@ class FeishuChoiceSessionTests(unittest.TestCase):
         ))
         self.assertIn("card", channel.sent[-1][1])
 
-    def test_actual_compact_flow_never_writes_ambiguous_number(self) -> None:
+    def test_actual_compact_flow_commits_latest_pending_number_once(self) -> None:
         channel, provider, store = FakeChannel(), TwoBooksDouban(), CandidateSelectionStore()
         service = BookInboxService(provider)
         for title in ("君幸食", "球形的荒野"):
@@ -247,8 +247,8 @@ class FeishuChoiceSessionTests(unittest.TestCase):
                 asyncio.run(base._maybe_handle_candidate_number(
                     channel, FakeMessage(content_text="1"), store,
                 ))
-                self.assertEqual(flow.commit_calls, [])
-                self.assertIn("《书名》 1", channel.sent[-1][1]["text"])
+                self.assertEqual(flow.commit_calls, ["1001"])
+                self.assertEqual(store.titles("oc_chat"), ("君幸食",))
         finally:
             base._maybe_handle_candidate_number = original_handler
             compact._PREPARED = original_prepared

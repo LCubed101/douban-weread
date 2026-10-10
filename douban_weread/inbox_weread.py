@@ -69,6 +69,21 @@ class WeReadEditionLookup:
             title_only = self.lookup_title(source_edition.title)
             if title_only.kind is WeReadLookupKind.UNAVAILABLE:
                 return title_only
+            if title_only.kind is WeReadLookupKind.EXACT and title_only.selected_edition is not None:
+                candidate = title_only.selected_edition
+                # A title-only hit is not proof of an identical edition.
+                # Reject known author conflicts; otherwise expose it as a
+                # possible alternative instead of incorrectly reporting absent.
+                source_authors = {_normalize_lookup_title(a) for a in source_edition.authors if a.strip()}
+                found_authors = {_normalize_lookup_title(a) for a in candidate.authors if a.strip()}
+                if source_authors and found_authors and source_authors.intersection(found_authors):
+                    return WeReadLookupResult(
+                        kind=WeReadLookupKind.ALTERNATIVE,
+                        source_title=source_edition.title,
+                        selected_edition=candidate,
+                        deep_link=title_only.deep_link,
+                        message=_available_message(source_edition, candidate, exact=False, deep_link=title_only.deep_link),
+                    )
 
         intent = aligned.intent
         selected = intent.selected_edition

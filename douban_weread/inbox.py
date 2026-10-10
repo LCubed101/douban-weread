@@ -79,9 +79,11 @@ class BookInboxDoubanProvider(Protocol):
 class BookInboxService:
     """Resolve one Inbox request into a safe, non-mutating confirmation decision."""
 
-    def __init__(self, douban_provider: BookInboxDoubanProvider, *, search_limit: int = 5) -> None:
+    def __init__(self, douban_provider: BookInboxDoubanProvider, *, search_limit: int = 10) -> None:
         self.douban_provider = douban_provider
-        self.search_limit = max(1, min(search_limit, 10))
+        # Search more candidates before strict title filtering. The provider
+        # already caps requests at 20; this does not relax write safeguards.
+        self.search_limit = max(1, min(search_limit, 20))
 
     def resolve(self, request: BookInboxRequest) -> BookInboxResolution:
         if request.input_kind is BookInboxInputKind.DOUBAN_URL:
@@ -116,6 +118,20 @@ class BookInboxService:
             # evidence before a candidate reaches the user or a WeRead lookup,
             # and fail closed rather than padding the list with weak matches.
             candidates = tuple(filter_title_candidates(query, raw_candidates))
+            if not candidates:
+                # Douban indexes some titles with terminal punctuation (e.g.
+                # 重启人生就从今日晚餐开始！). Try the canonical punctuation
+                # variant but still require the original title evidence.
+                variants = [query.rstrip("！!？?。")]
+                if variants[0] == query:
+                    variants.append(query + "！")
+                for variant in variants:
+                    if not variant or variant == query:
+                        continue
+                    additional = self.douban_provider.search_by_title(variant, count=self.search_limit)
+                    candidates = tuple(filter_title_candidates(query, additional))
+                    if candidates:
+                        break
             if not candidates:
                 # No exact/same-work title evidence at all. Before failing
                 # closed, check for one single, high-confidence "did you
