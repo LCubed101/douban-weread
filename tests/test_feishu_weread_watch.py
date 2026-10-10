@@ -160,8 +160,8 @@ class FeishuWeReadWatchTests(unittest.TestCase):
         text = channel.sent[0][1]["text"]
         self.assertIn("已经在豆瓣标记为想读", text)
         self.assertIn("等待上架", text)
-        self.assertIn("弱匹配", text)
-        self.assertIn("标题 + ISBN", text)
+        self.assertIn("当前未找到", text)
+        self.assertIn("标题或 ISBN", text)
         self.assertEqual(response["toast"]["type"], "success")
 
     def test_already_wish_still_runs_read_only_lookup_and_queues_unavailable(self) -> None:
