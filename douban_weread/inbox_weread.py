@@ -213,7 +213,7 @@ class WeReadEditionLookup:
                 author = str(getattr(candidate, "author", "") or "").strip() or "作者未知"
                 link = str(getattr(candidate, "deep_link", "") or "").strip()
                 lines.append(f"· 《{candidate_title}》 · {author}" + (f" · {link}" if link.startswith("https://weread.qq.com/") else ""))
-            related_note = "\\n" + "\\n".join(lines)
+            related_note = "\n" + "\n".join(lines)
         return WeReadLookupResult(
             kind=WeReadLookupKind.NOT_FOUND,
             source_title=query,
