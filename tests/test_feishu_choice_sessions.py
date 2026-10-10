@@ -64,7 +64,7 @@ class FeishuChoiceSessionTests(unittest.TestCase):
             candidate_store=store,
         ))
         card = channel.sent[-1][1]["card"]
-        self.assertEqual(card["elements"][1]["actions"][0]["value"]["douban_subject_id"], "1002")
+        self.assertEqual(next(action["value"]["douban_subject_id"] for element in card["elements"] for action in element.get("actions", []) if "douban_subject_id" in action.get("value", {})), "1002")
         self.assertEqual(provider.title_calls, ["君幸食", "球形的荒野"])
 
     def test_orphan_number_never_calls_douban(self) -> None:
