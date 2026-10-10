@@ -117,6 +117,20 @@ class BookInboxService:
             # and fail closed rather than padding the list with weak matches.
             candidates = tuple(filter_title_candidates(query, raw_candidates))
             if not candidates:
+                # Douban indexes some titles with terminal punctuation (e.g.
+                # 重启人生就从今日晚餐开始！). Try the canonical punctuation
+                # variant but still require the original title evidence.
+                variants = [query.rstrip("！!？?。")]
+                if variants[0] == query:
+                    variants.append(query + "！")
+                for variant in variants:
+                    if not variant or variant == query:
+                        continue
+                    additional = self.douban_provider.search_by_title(variant, count=self.search_limit)
+                    candidates = tuple(filter_title_candidates(query, additional))
+                    if candidates:
+                        break
+            if not candidates:
                 # No exact/same-work title evidence at all. Before failing
                 # closed, check for one single, high-confidence "did you
                 # mean" typo suggestion from the same raw search results —
