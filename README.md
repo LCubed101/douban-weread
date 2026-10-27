@@ -116,6 +116,31 @@ For step-by-step instructions, see [docs/FEISHU_SETUP.md](docs/FEISHU_SETUP.md),
 
 Do **not** commit `.env` or paste real secrets into GitHub issues, screenshots or chat messages.
 
+## Official WeRead Skill (optional AI Agent installation)
+
+The official Tencent WeRead Skill is available at
+[weread.qq.com/r/weread-skills](https://weread.qq.com/r/weread-skills)
+and its source is [Tencent/WeChatReading](https://github.com/Tencent/WeChatReading/tree/main/skills).
+
+For AI agents that support the Skills CLI, install it separately:
+
+```bash
+npx skills add Tencent/WeChatReading -g
+```
+
+Obtain your personal `WEREAD_API_KEY` from the official page and keep it
+**only in your local environment**. Do not commit the key.
+
+**This optional global Agent Skill installation is separate from the Python
+WeRead Gateway client used by the Feishu Bot.** The Python client reports
+`skill_version=1.0.5` and sends flat gateway parameters; installing the
+Agent Skill does not automatically deploy or restart the Bot.
+
+For a safe read-only smoke test after updating the Python client, load
+your local `.env` and run a WeRead search. The official Gateway currently
+provides read-side capabilities; it does not provide an automatic write-to-
+WeRead-shelf flow.
+
 ## Try WeRead first
 
 Load the environment:
