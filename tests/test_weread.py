@@ -35,7 +35,7 @@ class WeReadClientTests(unittest.TestCase):
             self.assertEqual(headers["Content-Type"], "application/json")
             payload = json.loads(body.decode("utf-8"))
             self.assertEqual(payload["api_name"], "/store/search")
-            self.assertEqual(payload["skill_version"], "1.0.4")
+            self.assertEqual(payload["skill_version"], "1.0.5")
             self.assertEqual(payload["keyword"], "白夜行")
             self.assertEqual(payload["scope"], 10)
             self.assertEqual(payload["count"], 5)
