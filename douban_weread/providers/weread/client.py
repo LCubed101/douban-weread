@@ -13,7 +13,7 @@ from douban_weread.providers.weread.shelf import WeReadShelfSnapshot, parse_shel
 
 
 DEFAULT_GATEWAY_URL = "https://i.weread.qq.com/api/agent/gateway"
-DEFAULT_SKILL_VERSION = "1.0.4"
+DEFAULT_SKILL_VERSION = "1.0.5"
 
 
 class WeReadProviderError(RuntimeError):
