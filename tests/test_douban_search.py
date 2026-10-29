@@ -152,6 +152,19 @@ class DoubanBookSearchClientTests(unittest.TestCase):
         self.assertEqual(search_calls, 2)
         self.assertEqual([edition.douban_id for edition in results], ["6082808", "27107109"])
 
+    def test_verification_page_does_not_report_no_match(self) -> None:
+        calls = 0
+
+        def transport(url: str, headers: dict[str, str]) -> _TextResponse:
+            nonlocal calls
+            calls += 1
+            return _TextResponse(status=200, body="<html><body>请输入验证码 captcha</body></html>")
+
+        client = DoubanBookSearchClient(transport=transport)
+        with self.assertRaisesRegex(DoubanProviderError, "access-verification"):
+            client.search_by_title("君幸食")
+        self.assertEqual(calls, 1)
+
     def test_genuine_empty_search_stops_after_one_retry(self) -> None:
         search_calls = 0
 

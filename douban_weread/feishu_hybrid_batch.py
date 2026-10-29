@@ -327,8 +327,6 @@ def prepare_hybrid_batch_douban() -> None:
             )
             return True
 
-        candidate_store.clear(message.chat_id)
-
         async def sync_douban(mention):
             try:
                 resolution = await asyncio.to_thread(service.resolve, request_from_text(mention.title))

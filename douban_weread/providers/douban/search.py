@@ -183,6 +183,10 @@ class DoubanBookSearchClient:
                     break
             if subject_ids:
                 return subject_ids
+            # Access-verification pages are not evidence of an absent title.
+            lowered = html.casefold()
+            if any(marker in lowered for marker in ("captcha", "验证码", "异常请求", "访问受限", "robot check")):
+                raise DoubanProviderError("Douban search returned an access-verification page; retry later")
         return []
 
     def _fetch_subject(self, subject_id: str) -> Edition | None:

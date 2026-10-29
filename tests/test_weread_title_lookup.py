@@ -96,7 +96,7 @@ class WeReadTitleLookupTest(unittest.TestCase):
             result.deep_link,
             "https://weread.qq.com/book-detail?v=87332a20811e1ad78g018d1e",
         )
-        self.assertIn("待上架/不可读", result.message)
+        self.assertIn("当前目录状态显示不可读", result.message)
 
     def test_available_candidate_without_book_info_is_not_marked_readable(self) -> None:
         provider = FakeProvider(

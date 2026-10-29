@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import re
 from typing import Any
 
 from douban_weread import feishu_bot as base
@@ -12,6 +14,18 @@ from douban_weread.reconciliation import ReconciliationAction
 _ORIGINAL_CANDIDATE_HANDLER = base._maybe_handle_candidate_number
 _ORIGINAL_CARD_HANDLER = base._handle_card_action
 _PREPARED = False
+
+
+def _douban_dry_run() -> bool:
+    return os.environ.get("DOUBAN_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+async def _send_dry_run_notice(channel: base.ChannelLike, chat_id: str, message_id: str | None, subject_id: str) -> None:
+    await channel.send(
+        chat_id,
+        {"text": f"🧪 DRY RUN：已识别豆瓣版本 {subject_id}，未修改豆瓣想读状态。"},
+        {"reply_to": message_id} if message_id else None,
+    )
 
 
 def _is_same_work_existing_wish(result: object) -> bool:
@@ -120,11 +134,31 @@ def prepare_compact_douban_flow() -> None:
         store: base.CandidateSelectionStore,
     ) -> bool:
         text = " ".join(message.content_text.split()).strip()
-        candidates = store.get(message.chat_id)
-        if not candidates or not text.isdigit():
+        match = re.fullmatch(r"(?:(?:《([^》]+)》|(.+?))\s+)?([0-9]{1,3})", text)
+        if match is None:
             return False
+        title = match.group(1) or match.group(2)
+        reply_id = getattr(message, "reply_to_message_id", None)
+        candidates = (store.get_for_title(message.chat_id, title) if title else
+                      store.get_for_reply(message.chat_id, reply_id) if reply_id else
+                      store.get(message.chat_id))
+        if not candidates:
+            titles = store.titles(message.chat_id)
+            if title and not titles:
+                await channel.send(message.chat_id, {"text": "当前没有待选版本，请重新发送书名后选择。"}, {"reply_to": message.message_id})
+                return True
+            hint = (
+                "当前有多本待选：" + "、".join(f"《{name}》" for name in titles)
+                + "。请回复《书名》 1 指定要选择的书。"
+                if len(titles) > 1 else
+                "当前没有这本书的待选版本，请重新发送书名。"
+                if title else
+                "当前没有待选版本。请先发送书名，再选择版本。"
+            )
+            await channel.send(message.chat_id, {"text": hint}, {"reply_to": message.message_id})
+            return True
 
-        choice = int(text)
+        choice = int(match.group(3))
         if choice < 1 or choice > len(candidates):
             await channel.send(
                 message.chat_id,
@@ -137,6 +171,10 @@ def prepare_compact_douban_flow() -> None:
         subject_id = str(getattr(edition, "douban_id", "") or "").strip()
         if not subject_id:
             return await _ORIGINAL_CANDIDATE_HANDLER(channel, message, store)
+
+        if _douban_dry_run():
+            await _send_dry_run_notice(channel, message.chat_id, message.message_id, subject_id)
+            return True
 
         try:
             result = await asyncio.to_thread(numeric_flow.commit, subject_id)
@@ -187,7 +225,11 @@ def prepare_compact_douban_flow() -> None:
         if not subject_id:
             return False
 
-        candidate_store.clear(message.chat_id)
+        # Do not discard another book's pending version choice.
+        if _douban_dry_run():
+            await _send_dry_run_notice(channel, message.chat_id, message.message_id, subject_id)
+            return True
+
         try:
             result = await asyncio.to_thread(wish_flow.commit, subject_id)
         except WISH_FLOW_ERRORS as exc:
@@ -232,6 +274,10 @@ def prepare_compact_douban_flow() -> None:
                 weread_lookup=weread_lookup,
                 weread_watch_store=weread_watch_store,
             )
+
+        if _douban_dry_run():
+            await _send_dry_run_notice(channel, chat_id, message_id or None, subject_id)
+            return {"toast": {"type": "info", "content": "DRY RUN：未修改豆瓣。"}}
 
         try:
             result = await asyncio.to_thread(flow.commit, subject_id)

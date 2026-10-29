@@ -285,7 +285,6 @@ async def _try_handle_multi_book_message(
     if len(mentions) < 2:
         return False
 
-    candidate_store.clear(message.chat_id)
     results = await _lookup_mentions(mentions, weread_lookup)
 
     for mention, result, error in results:
@@ -336,8 +335,9 @@ def build_bot(
     lookup = weread_lookup or WeReadEditionLookup()
     watch_store = weread_watch_store or default_watch_store()
     candidate_store = base.CandidateSelectionStore()
+    chat_locks: dict[str, asyncio.Lock] = {}
 
-    async def on_message(message: base.InboundMessageLike) -> None:
+    async def _process_message(message: base.InboundMessageLike) -> None:
         try:
             text = " ".join(message.content_text.split()).strip()
             if message.raw_content_type in {"text", "post", ""} and text.isdecimal() and not candidate_store.get(message.chat_id):
@@ -389,6 +389,13 @@ def build_bot(
                 {"text": "这条消息暂时无法安全处理，请稍后再试。"},
                 {"reply_to": message.message_id},
             )
+
+    async def on_message(message: base.InboundMessageLike) -> None:
+        # Serialize message processing per chat so slow Douban/WeRead lookups
+        # cannot overwrite a later message's choice context or reorder replies.
+        lock = chat_locks.setdefault(message.chat_id, asyncio.Lock())
+        async with lock:
+            await _process_message(message)
 
     async def on_card_action(event: object):
         value = base._card_action_value(event)
