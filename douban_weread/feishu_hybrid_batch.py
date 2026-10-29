@@ -152,6 +152,7 @@ def _compact_batch_card(
     douban_outcomes: list[_DoubanBatchOutcome],
     weread_results,
     watch_store: object | None,
+    candidate_statuses: dict[str, tuple[str, ...]] | None = None,
 ) -> dict[str, object]:
     douban_ok = [o for o in douban_outcomes if o.status in {"written", "already"}]
     douban_ambiguous = [o for o in douban_outcomes if o.status == "ambiguous"]
@@ -194,6 +195,7 @@ def _compact_batch_card(
         )
         for outcome in douban_ambiguous:
             elements.append({"tag": "markdown", "content": f"《{outcome.title}》"})
+            statuses = (candidate_statuses or {}).get(outcome.title, ())
             for index, edition_candidate in enumerate(outcome.candidates, start=1):
                 details = " · ".join(
                     value
@@ -212,6 +214,8 @@ def _compact_batch_card(
                         "content": f"{index}. {edition_candidate.title}" + (f" · {details}" if details else ""),
                     }
                 )
+                if index <= len(statuses):
+                    elements.append({"tag": "markdown", "content": statuses[index - 1]})
                 if subject_id:
                     # Reuses the existing single-book confirm_wish card
                     # action (feishu_bot._handle_card_action, patched by
@@ -226,7 +230,7 @@ def _compact_batch_card(
                                     "tag": "button",
                                     "text": {"tag": "plain_text", "content": f"选择 {index}"},
                                     "type": "primary",
-                                    "value": {"action": "confirm_wish", "douban_subject_id": subject_id},
+                                    "value": {"action": "confirm_book", "douban_subject_id": subject_id},
                                 }
                             ],
                         }
@@ -302,7 +306,6 @@ def prepare_hybrid_batch_douban() -> None:
     from douban_weread import feishu_bot_v11 as v11
 
     service = BookInboxService(DoubanBookSearchClient(), search_limit=5)
-    flow = DoubanWishFlow()
 
     async def hybrid_batch_handler(
         channel: base.ChannelLike,
@@ -327,57 +330,39 @@ def prepare_hybrid_batch_douban() -> None:
             )
             return True
 
-        async def sync_douban(mention):
+        # A batch capture only searches. It never changes Douban reading state
+        # until the user explicitly chooses an edition for each book.
+        async def resolve_douban(mention):
             try:
                 resolution = await asyncio.to_thread(service.resolve, request_from_text(mention.title))
-                candidate = _pick_douban_candidate(resolution, mention.title)
-                ambiguous_source = resolution
-
-                # Retry the search with the main title only, but still compare
-                # returned candidates against the original full title first.
-                # Douban often returns `主标题 : 副标题` even for a main-title
-                # search, so comparing only against the short query loses the
-                # exact book we were trying to recover.
-                if candidate is None:
+                candidates = tuple(getattr(resolution, "candidates", ()) or ())
+                if not candidates and getattr(resolution, "confirmation", None) is not None:
+                    candidates = (resolution.confirmation.candidate,)
+                if not candidates:
                     main_title = _main_title(mention.title)
                     if main_title:
-                        fallback_resolution = await asyncio.to_thread(
-                            service.resolve,
-                            request_from_text(main_title),
-                        )
-                        candidate = _pick_douban_candidate(fallback_resolution, mention.title)
-                        if candidate is None:
-                            candidate = _pick_douban_candidate(fallback_resolution, main_title)
-                        if candidate is None:
-                            ambiguous_source = fallback_resolution
-
-                if candidate is None:
-                    # Multiple same-work (or same-title) editions remain and
-                    # nothing narrowed them to one — this must surface as a
-                    # real choice, never a silent pick (BUG 3). A batch
-                    # never writes Douban on the user's behalf here.
-                    ambiguous_candidates = _same_work_edition_candidates(ambiguous_source)
-                    if len(ambiguous_candidates) > 1:
-                        return _DoubanBatchOutcome(
-                            mention.title,
-                            "ambiguous",
-                            "存在多个豆瓣版本，需要你选择",
-                            candidates=ambiguous_candidates,
-                        )
-                    return _DoubanBatchOutcome(mention.title, "unresolved", "没有安全匹配到豆瓣版本")
-                subject_id = str(candidate.douban_id or "").strip()
-                if not subject_id:
-                    return _DoubanBatchOutcome(mention.title, "unresolved", "豆瓣条目缺少 ID")
-                result = await asyncio.to_thread(flow.commit, subject_id)
-                if result.kind is WishFlowKind.WRITTEN:
-                    return _DoubanBatchOutcome(mention.title, "written")
-                if result.kind is WishFlowKind.ALREADY_WISH or _is_same_work_existing_wish(result):
-                    return _DoubanBatchOutcome(mention.title, "already")
-                return _DoubanBatchOutcome(mention.title, "blocked", "已有阅读状态需要确认")
+                        fallback = await asyncio.to_thread(service.resolve, request_from_text(main_title))
+                        candidates = tuple(getattr(fallback, "candidates", ()) or ())
+                        if not candidates and getattr(fallback, "confirmation", None) is not None:
+                            candidates = (fallback.confirmation.candidate,)
+                if not candidates:
+                    return _DoubanBatchOutcome(mention.title, "unresolved", "尚未找到可靠的豆瓣候选版本")
+                return _DoubanBatchOutcome(
+                    mention.title, "ambiguous", "请选定豆瓣版本后自动加入想读",
+                    candidates=candidates,
+                )
             except WISH_FLOW_ERRORS:
-                return _DoubanBatchOutcome(mention.title, "failed", "豆瓣暂时无法写入")
+                return _DoubanBatchOutcome(mention.title, "failed", "豆瓣搜索暂时失败")
 
-        douban_outcomes = list(await asyncio.gather(*(sync_douban(mention) for mention in mentions)))
+        douban_outcomes = list(await asyncio.gather(*(resolve_douban(mention) for mention in mentions)))
+        for outcome in douban_outcomes:
+            if outcome.candidates:
+                candidate_store.set(message.chat_id, outcome.candidates, title=outcome.title)
+
+        candidate_statuses = {}
+        for outcome in douban_outcomes:
+            if outcome.candidates:
+                candidate_statuses[outcome.title] = await base._lookup_candidate_statuses(outcome.candidates, weread_lookup)
 
         weread_results = await v11._lookup_mentions(mentions, weread_lookup)
         for mention, result, error in weread_results:
@@ -402,6 +387,7 @@ def prepare_hybrid_batch_douban() -> None:
                     douban_outcomes=douban_outcomes,
                     weread_results=weread_results,
                     watch_store=weread_watch_store,
+                    candidate_statuses=candidate_statuses,
                 )
             },
             {"reply_to": message.message_id},

@@ -161,6 +161,44 @@ class WeReadEditionLookupTests(unittest.TestCase):
             [("白夜行", 20), ("9787544291163", 20), ("白夜行", 20)],
         )
 
+    def test_jiangyuanlong_exact_title_readable_is_not_false_negative(self) -> None:
+        provider = KeywordCatalog(
+            {"酱园弄": [WeReadSearchCandidate(
+                book_id="jiang", title="酱园弄", author="作者甲",
+                soldout=False, deep_link="https://weread.qq.com/web/book/jiang",
+            )]},
+            {"jiang": Edition(title="酱园弄", authors=["作者甲"], weread_id="jiang")},
+        )
+        result = WeReadEditionLookup(provider).lookup_title("酱园弄")
+        self.assertEqual(result.kind, WeReadLookupKind.EXACT)
+        self.assertEqual(result.selected_edition.weread_id, "jiang")
+
+    def test_mengyoushu_matching_author_falls_back_to_readable_alternative(self) -> None:
+        provider = KeywordCatalog(
+            {"梦游书": [WeReadSearchCandidate(
+                book_id="dream", title="梦游书", author="作者甲",
+                soldout=False, deep_link="https://weread.qq.com/web/book/dream",
+            )]},
+            {"dream": Edition(title="梦游书", authors=["作者甲"], weread_id="dream")},
+        )
+        source = Edition(title="梦游书", authors=["作者甲"], isbn="9780000000001")
+        result = WeReadEditionLookup(provider).lookup(source)
+        self.assertIn(result.kind, {WeReadLookupKind.EXACT, WeReadLookupKind.ALTERNATIVE})
+        self.assertEqual(result.selected_edition.weread_id, "dream")
+
+    def test_same_title_conflicting_author_does_not_claim_alternative(self) -> None:
+        provider = KeywordCatalog(
+            {"梦游书": [WeReadSearchCandidate(
+                book_id="different", title="梦游书", author="另一作者",
+                soldout=False,
+            )]},
+            {"different": Edition(title="梦游书", authors=["另一作者"], weread_id="different")},
+        )
+        result = WeReadEditionLookup(provider).lookup(
+            Edition(title="梦游书", authors=["作者甲"], isbn="9780000000001")
+        )
+        self.assertEqual(result.kind, WeReadLookupKind.NOT_FOUND)
+
     def test_no_same_work_after_title_and_isbn_is_bounded_not_found(self) -> None:
         provider = KeywordCatalog(
             {

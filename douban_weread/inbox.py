@@ -79,9 +79,11 @@ class BookInboxDoubanProvider(Protocol):
 class BookInboxService:
     """Resolve one Inbox request into a safe, non-mutating confirmation decision."""
 
-    def __init__(self, douban_provider: BookInboxDoubanProvider, *, search_limit: int = 5) -> None:
+    def __init__(self, douban_provider: BookInboxDoubanProvider, *, search_limit: int = 10) -> None:
         self.douban_provider = douban_provider
-        self.search_limit = max(1, min(search_limit, 10))
+        # Search more candidates before strict title filtering. The provider
+        # already caps requests at 20; this does not relax write safeguards.
+        self.search_limit = max(1, min(search_limit, 20))
 
     def resolve(self, request: BookInboxRequest) -> BookInboxResolution:
         if request.input_kind is BookInboxInputKind.DOUBAN_URL:
@@ -117,6 +119,20 @@ class BookInboxService:
             # and fail closed rather than padding the list with weak matches.
             candidates = tuple(filter_title_candidates(query, raw_candidates))
             if not candidates:
+                # Douban indexes some titles with terminal punctuation (e.g.
+                # 重启人生就从今日晚餐开始！). Try the canonical punctuation
+                # variant but still require the original title evidence.
+                variants = [query.rstrip("！!？?。")]
+                if variants[0] == query:
+                    variants.append(query + "！")
+                for variant in variants:
+                    if not variant or variant == query:
+                        continue
+                    additional = self.douban_provider.search_by_title(variant, count=self.search_limit)
+                    candidates = tuple(filter_title_candidates(query, additional))
+                    if candidates:
+                        break
+            if not candidates:
                 # No exact/same-work title evidence at all. Before failing
                 # closed, check for one single, high-confidence "did you
                 # mean" typo suggestion from the same raw search results —
@@ -136,10 +152,23 @@ class BookInboxService:
                         candidates=(suggestion,),
                         message=f"没有找到完全一致的《{query}》，你是不是想找《{suggestion.title}》？",
                     )
+                # Related search hits are discovery hints only, never edition
+                # identity evidence and never eligible for the write path.
+                related = _related_title_hints(query, raw_candidates)
+                suffix = ""
+                if related:
+                    lines = ["豆瓣搜索还返回以下相关书籍（并非已确认的同一作品）："]
+                    for edition in related:
+                        author = "、".join(edition.authors) if edition.authors else "作者未知"
+                        subject_url = edition.source_metadata.get("subject_url")
+                        link = f" · {subject_url}" if isinstance(subject_url, str) and subject_url.startswith("https://book.douban.com/subject/") else ""
+                        lines.append(f"· 《{edition.title}》 · {author}{link}")
+                    lines.append("如需加入想读，请发送完整书名或豆瓣图书链接后选择版本。")
+                    suffix = "\n" + "\n".join(lines)
                 return BookInboxResolution(
                     kind=BookInboxResolutionKind.NOT_FOUND,
                     request=request,
-                    message=f"没有找到《{query}》的豆瓣候选版本。",
+                    message=f"没有找到《{query}》的明确豆瓣候选版本。{suffix}",
                 )
             if len(candidates) == 1:
                 return _confirm(request, candidates[0])
@@ -244,3 +273,21 @@ def _confirm(request: BookInboxRequest, edition: Edition) -> BookInboxResolution
         confirmation=confirmation,
         candidates=(edition,),
     )
+
+
+def _related_title_hints(query: str, candidates: list[Edition]) -> list[Edition]:
+    """Bounded, non-actionable hints; never relax title identity checks."""
+    normalized = re.sub(r"[\\s《》:：，,。.!！?？()（）\\[\\]【】]+", "", query).casefold()
+    if len(normalized) < 3:
+        return []
+    result: list[Edition] = []
+    seen: set[str] = set()
+    for edition in candidates:
+        title = edition.title.strip()
+        normalized_title = re.sub(r"[\\s《》:：，,。.!！?？()（）\\[\\]【】]+", "", title).casefold()
+        if normalized in normalized_title and normalized_title != normalized and title not in seen:
+            seen.add(title)
+            result.append(edition)
+            if len(result) >= 3:
+                break
+    return result

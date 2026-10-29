@@ -178,7 +178,7 @@ class CompactBatchCardAmbiguousEditionTest(unittest.TestCase):
         ]
         self.assertEqual(len(buttons), 2)
         for value in buttons:
-            self.assertEqual(value["action"], "confirm_wish")
+            self.assertEqual(value["action"], "confirm_book")
         self.assertEqual(
             {value["douban_subject_id"] for value in buttons},
             {"6840152", "20500085"},

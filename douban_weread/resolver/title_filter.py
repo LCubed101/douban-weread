@@ -25,8 +25,17 @@ _VOLUME_SUFFIX_RE = re.compile(
 )
 
 
+_TITLE_SCRIPT_EQUIVALENTS = str.maketrans({"夢": "梦", "遊": "游", "書": "书"})
+
+
 def _normalize(value: str | None) -> str:
-    return unicodedata.normalize("NFKC", value or "").casefold().strip()
+    normalized = unicodedata.normalize("NFKC", value or "").casefold().strip()
+    # Deliberately limited to verified title characters; avoid broad script
+    # conversion that could conflate unrelated works.
+    normalized = normalized.translate(_TITLE_SCRIPT_EQUIVALENTS)
+    # A final exclamation/question mark is title punctuation, not a sequel
+    # or a different work. Keep internal punctuation and numbering strict.
+    return normalized.rstrip("!?！？")
 
 
 def is_same_work_title(query: str, candidate_title: str) -> bool:
